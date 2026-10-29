@@ -13,6 +13,19 @@ data class SourceRules(
     val listCover: String = "",
     val listLink: String = "",
     val listIntro: String = "",
+    /**
+     * 搜索结果页与分类页结构不同时，用这组规则覆盖 [listItem] 等。
+     * 留空表示搜索结果页复用列表页规则。
+     *
+     * 典型场景：分类页是卡片（`div.item` + `dl>dt>a`），
+     * 搜索结果是表格（`table.grid tr` + `td a`）。
+     */
+    val searchItem: String = "",
+    val searchName: String = "",
+    val searchLink: String = "",
+    val searchAuthor: String = "",
+    val searchCover: String = "",
+    val searchIntro: String = "",
     val detailName: String = "",
     val detailAuthor: String = "",
     val detailCover: String = "",
@@ -114,6 +127,12 @@ data class SourceConfig(
                     listCover = ro.optString("listCover"),
                     listLink = ro.optString("listLink"),
                     listIntro = ro.optString("listIntro"),
+                    searchItem = ro.optString("searchItem"),
+                    searchName = ro.optString("searchName"),
+                    searchLink = ro.optString("searchLink"),
+                    searchAuthor = ro.optString("searchAuthor"),
+                    searchCover = ro.optString("searchCover"),
+                    searchIntro = ro.optString("searchIntro"),
                     detailName = ro.optString("detailName"),
                     detailAuthor = ro.optString("detailAuthor"),
                     detailCover = ro.optString("detailCover"),
@@ -162,6 +181,12 @@ data class SourceConfig(
             ro.put("listCover", r.listCover)
             ro.put("listLink", r.listLink)
             ro.put("listIntro", r.listIntro)
+            ro.put("searchItem", r.searchItem)
+            ro.put("searchName", r.searchName)
+            ro.put("searchLink", r.searchLink)
+            ro.put("searchAuthor", r.searchAuthor)
+            ro.put("searchCover", r.searchCover)
+            ro.put("searchIntro", r.searchIntro)
             ro.put("detailName", r.detailName)
             ro.put("detailAuthor", r.detailAuthor)
             ro.put("detailCover", r.detailCover)

@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -12,8 +12,8 @@ android {
         applicationId = "com.modu.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "1.4.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -56,6 +56,8 @@ android {
             // 规则转换失败时静默产出错数据，比直接报错更糟。
             all {
                 it.systemProperty("file.encoding", "UTF-8")
+                // 联网验证开关：-PswapLive 打开 SwapLiveTest 的真实请求
+                if (project.hasProperty("swapLive")) it.systemProperty("swapLive", "1")
             }
         }
     }

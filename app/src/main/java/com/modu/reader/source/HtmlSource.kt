@@ -1,4 +1,4 @@
-package com.modu.reader.source
+﻿package com.modu.reader.source
 
 import com.modu.reader.data.Book
 import com.modu.reader.data.Category
@@ -22,7 +22,7 @@ import java.net.URLEncoder
  *  - 正文分页：`contentNext` 指「下一页」链接（`/1.html`、`/2.html` 这类）；
  *  - 正文多容器：`content` 匹配到多个容器时，按文档顺序合并（嵌套命中的内层会被去掉）。
  */
-class HtmlSource(
+open class HtmlSource(
     override val cfg: SourceConfig,
     /** 传输层注入点：留空走 Http + Jsoup；单测可替换成假页面 */
     private val pageLoader: (suspend (String) -> Document)? = null
@@ -70,24 +70,46 @@ class HtmlSource(
         val path = tpl.replace("{key}", kw).replace("{page}", page.toString())
         val url = abs(cfg.baseUrl, path)
         val doc = load(url)
-        return parseList(doc, url)
+        // 搜索结果页结构与分类页不同时，用 search* 那组规则覆盖
+        return if (r.searchItem.isNotBlank()) {
+            parseList(
+                doc, url,
+                item = r.searchItem,
+                name = r.searchName.ifBlank { r.listName },
+                link = r.searchLink.ifBlank { r.listLink },
+                author = r.searchAuthor.ifBlank { r.listAuthor },
+                cover = r.searchCover.ifBlank { r.listCover },
+                intro = r.searchIntro.ifBlank { r.listIntro }
+            )
+        } else {
+            parseList(doc, url)
+        }
     }
 
-    private fun parseList(doc: Document, pageUrl: String): List<Book> {
-        val items = Rule.selectAll(r.listItem, doc)
+    private fun parseList(
+        doc: Document,
+        pageUrl: String,
+        item: String = r.listItem,
+        name: String = r.listName,
+        link: String = r.listLink,
+        author: String = r.listAuthor,
+        cover: String = r.listCover,
+        intro: String = r.listIntro
+    ): List<Book> {
+        val items = Rule.selectAll(item, doc)
         val out = ArrayList<Book>(items.size)
         items.forEach { el ->
-            val title = Rule.eval(r.listName.ifBlank { "a@text" }, el)
-            val link = Rule.eval(r.listLink.ifBlank { "a@href" }, el)
-            if (title.isBlank() || link.isBlank()) return@forEach
+            val title = Rule.eval(name.ifBlank { "a@text" }, el)
+            val linkUrl = Rule.eval(link.ifBlank { "a@href" }, el)
+            if (title.isBlank() || linkUrl.isBlank()) return@forEach
             out.add(
                 Book(
                     sourceId = cfg.id,
-                    url = abs(pageUrl, link),
+                    url = abs(pageUrl, linkUrl),
                     title = title,
-                    author = Rule.eval(r.listAuthor, el),
-                    cover = abs(pageUrl, Rule.eval(r.listCover, el)),
-                    intro = Rule.eval(r.listIntro, el)
+                    author = Rule.eval(author, el),
+                    cover = abs(pageUrl, Rule.eval(cover, el)),
+                    intro = Rule.eval(intro, el)
                 )
             )
         }

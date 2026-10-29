@@ -30,3 +30,12 @@ interface BookSource {
     /** 正文（一行一段） */
     suspend fun content(book: Book, chapter: Chapter): String
 }
+
+/**
+ * 「发现源」标记：这类源只负责按分类发现书（书名/作者/简介/封面），
+ * 正文要靠换源到第三方源去看。
+ *
+ * 起点 VIP、番茄正文页都是抓不到的，把这类源显式标出来，
+ * 换源时自动跳过它们（拿它们当正文源没有意义）。
+ */
+interface DiscoverySource

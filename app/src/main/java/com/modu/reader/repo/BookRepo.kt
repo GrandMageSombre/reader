@@ -2,10 +2,14 @@ package com.modu.reader.repo
 
 import com.modu.reader.App
 import com.modu.reader.data.Book
+import com.modu.reader.data.BookSwap
 import com.modu.reader.data.Category
 import com.modu.reader.data.Chapter
 import com.modu.reader.data.ShelfBook
+import com.modu.reader.data.SwapCandidate
 import com.modu.reader.source.BookSource
+import com.modu.reader.source.DiscoverySource
+import com.modu.reader.source.SwapMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,12 +47,14 @@ class BookRepo(private val app: App) {
 
     /**
      * 章节目录：优先网络，失败或为空时回落到本地缓存。
+     * 若这本书换过源，目录从换源的目标书源取。
      */
     suspend fun chapters(sourceId: String, bookUrl: String, title: String): List<Chapter> =
         withContext(Dispatchers.IO) {
             val cached = app.db.loadChapters(bookUrl)
             try {
-                val fresh = src(sourceId).chapters(Book(sourceId, bookUrl, title))
+                val (src, book) = effective(sourceId, bookUrl, title)
+                val fresh = src.chapters(book)
                 if (fresh.isNotEmpty()) {
                     app.db.saveChapters(bookUrl, fresh)
                     fresh
@@ -63,6 +69,7 @@ class BookRepo(private val app: App) {
     /**
      * 正文：本地缓存优先（翻回去看不用再联网），没有才抓。
      * force = true 时无视缓存重新抓（阅读器里「重试」用）。
+     * 若这本书换过源，正文从换源的目标书源抓。
      */
     suspend fun content(
         sourceId: String,
@@ -75,7 +82,8 @@ class BookRepo(private val app: App) {
         if (!force) {
             app.db.loadContent(key)?.takeIf { it.isNotBlank() }?.let { return@withContext it }
         }
-        val text = src(sourceId).content(Book(sourceId, bookUrl, bookTitle), chapter)
+        val (src, book) = effective(sourceId, bookUrl, bookTitle)
+        val text = src.content(book, chapter)
         if (text.isNotBlank()) app.db.saveContent(key, text)
         text
     }
@@ -84,11 +92,61 @@ class BookRepo(private val app: App) {
     suspend fun progress(sourceId: String, bookUrl: String): Triple<Int, Int, String>? =
         withContext(Dispatchers.IO) { app.db.progressOf(sourceId, bookUrl) }
 
+    // ---------------- 换源 ----------------
+
+    /**
+     * 在其它书源里找这本书的正文来源。
+     *
+     * 默认排除当前书源与所有「发现源」（起点/番茄），因为它们本来就抓不到正文。
+     */
+    suspend fun findSwapCandidates(
+        sourceId: String,
+        bookUrl: String,
+        title: String,
+        author: String
+    ): List<SwapCandidate> = withContext(Dispatchers.IO) {
+        val pool = app.sources.available()
+            .filter { it.id != sourceId && !app.sources.isDiscovery(it.id) }
+            .mapNotNull { app.sources.source(it.id) }
+        SwapMatcher.find(Book(sourceId, bookUrl, title, author), pool)
+    }
+
+    suspend fun swapOf(bookUrl: String): BookSwap? =
+        withContext(Dispatchers.IO) { app.db.loadSwap(bookUrl) }
+
+    suspend fun setSwap(swap: BookSwap) = withContext(Dispatchers.IO) {
+        app.db.saveSwap(swap)
+    }
+
+    /** 取消换源，回到原书源 */
+    suspend fun clearSwap(bookUrl: String) = withContext(Dispatchers.IO) {
+        app.db.clearSwap(bookUrl)
+    }
+
+    /**
+     * 取出「实际用来抓目录/正文」的书与源：
+     * 有换源记录就用第三方源上的那本，否则用原书。
+     */
+    private suspend fun effective(sourceId: String, bookUrl: String, title: String): Pair<BookSource, Book> {
+        val swap = app.db.loadSwap(bookUrl)
+        if (swap != null) {
+            val src = app.sources.source(swap.sourceId)
+            if (src != null) {
+                val realTitle = swap.matchedTitle.ifBlank { title }
+                return src to Book(swap.sourceId, swap.sourceBookUrl, realTitle)
+            }
+            // 换源的目标书源被删了：清掉记录，回落到原书
+            app.db.clearSwap(bookUrl)
+        }
+        return src(sourceId) to Book(sourceId, bookUrl, title)
+    }
+
     suspend fun prefetch(sourceId: String, bookUrl: String, bookTitle: String, chapter: Chapter) {
         try {
             val key = contentKey(bookUrl, chapter.index)
             if (!app.db.loadContent(key).isNullOrBlank()) return
-            val text = src(sourceId).content(Book(sourceId, bookUrl, bookTitle), chapter)
+            val (src, book) = effective(sourceId, bookUrl, bookTitle)
+            val text = src.content(book, chapter)
             if (text.isNotBlank()) app.db.saveContent(key, text)
         } catch (e: Exception) {
             // 预取失败无所谓

@@ -109,8 +109,18 @@ class SourceManager(context: Context) {
      */
     fun source(id: String): BookSource? {
         val cfg = byId(id) ?: return null
-        return if (cfg.id == DemoSource.ID) DemoSource(cfg) else HtmlSource(cfg)
+        return when {
+            cfg.id == DemoSource.ID -> DemoSource(cfg)
+            // 番茄走 JSON 接口（HTML 列表拿不到），且标为发现源
+            cfg.id == FanqieSource.ID -> FanqieDiscoverySource(cfg)
+            // 起点：分类发现 + 免费章节，VIP 抓不到 → 标为发现源
+            cfg.id == "qidian" -> QidianSource(cfg)
+            else -> HtmlSource(cfg)
+        }
     }
+
+    /** 这个源是不是「只负责发现书、正文要靠换源」的类型 */
+    fun isDiscovery(id: String): Boolean = source(id) is DiscoverySource
 
     fun available(): List<SourceConfig> = _sources.filter { it.enabled }
 

@@ -168,15 +168,21 @@ class BuiltinSourceRulesTest {
         )
     }
 
-    // ---------------- 番茄 ----------------
+    // ---------------- 番茄（现在是 API 发现源） ----------------
 
     @Test
-    fun `番茄书籍页能取到书名与章节链接`() = runBlocking {
-        val src = sourceOf("fanqie", mapOf("https://fanqienovel.com/page/" to "fanqie_book.html"))
-        val b = src.detail(Book("fanqie", "https://fanqienovel.com/page/7143038691944959011", "占位"))
-
-        assertEquals("十日终焉", b.title)
-        assertTrue("封面应取到", b.cover.startsWith("http"))
+    fun `番茄作为发现源有分类且分类指向 api 路径`() {
+        val cfg = BuiltinSources.all().first { it.id == FanqieSource.ID }
+        assertTrue("番茄应配好分类（走 /api/rank/list）", cfg.categories.isNotEmpty())
+        assertEquals(
+            "番茄的分类应指向 JSON 接口",
+            3, cfg.categories.count { it.url.contains("/api/rank/list") }
+        )
+        // 番茄的正文抓不到，必须靠换源 —— 这里断言它没有配置 HTML 正文规则
+        assertTrue(
+            "番茄不应配置 HTML 正文规则（正文页是 JS 渲染的）",
+            cfg.rules.content.isBlank()
+        )
     }
 
     // ---------------- 三一小说（31xs） ----------------
@@ -274,12 +280,28 @@ class BuiltinSourceRulesTest {
     fun `内置源的关键规则都不为空`() {
         BuiltinSources.all().forEach { cfg ->
             if (cfg.id == DemoSource.ID) return@forEach
+            // 番茄走 JSON 接口，不依赖 HTML 规则；它靠 categories 取书
+            if (cfg.id == FanqieSource.ID) {
+                assertTrue("番茄必须有分类（走 api）", cfg.categories.isNotEmpty())
+                return@forEach
+            }
             val r = cfg.rules
-            assertTrue("${cfg.name} 缺少 listItem 或 chapterList —— 至少要有一种取书方式",
-                r.listItem.isNotBlank() || r.chapterList.isNotBlank())
+            assertTrue(
+                "${cfg.name} 缺少 listItem 或 chapterList —— 至少要有一种取书方式",
+                r.listItem.isNotBlank() || r.chapterList.isNotBlank()
+            )
             if (r.content.isNotBlank()) {
                 assertTrue("${cfg.name} 配了 content 就必须配 chapterList", r.chapterList.isNotBlank())
             }
         }
+    }
+
+    @Test
+    fun `搜索页与分类页结构不同时用 search 规则覆盖`() {
+        val ws = BuiltinSources.all().first { it.id == "wangshu" }
+        // 望书网：分类页是卡片、搜索页是表格，必须分开配置
+        assertTrue("望书网应配置 searchItem", ws.rules.searchItem.isNotBlank())
+        assertTrue("望书网的 listItem 与 searchItem 应不同", ws.rules.listItem != ws.rules.searchItem)
+        assertTrue("望书网应配 searchUrl", ws.rules.searchUrl.isNotBlank())
     }
 }

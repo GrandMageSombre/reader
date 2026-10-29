@@ -40,7 +40,9 @@ import androidx.navigation.NavHostController
 import com.modu.reader.App
 import com.modu.reader.R
 import com.modu.reader.data.Book
+import com.modu.reader.data.BookSwap
 import com.modu.reader.data.Chapter
+import com.modu.reader.data.SwapCandidate
 import com.modu.reader.ui.CoverImage
 import com.modu.reader.ui.ErrorView
 import com.modu.reader.ui.LoadingView
@@ -72,10 +74,19 @@ fun DetailScreen(
     var reloadKey by remember { mutableStateOf(0) }
     var chaptersError by remember { mutableStateOf<String?>(null) }
 
+    // ---- 换源 ----
+    var showSwap by remember { mutableStateOf(false) }
+    var swapLoading by remember { mutableStateOf(false) }
+    var swapError by remember { mutableStateOf<String?>(null) }
+    var swapCandidates by remember { mutableStateOf<List<SwapCandidate>>(emptyList()) }
+    var currentSwap by remember { mutableStateOf<BookSwap?>(null) }
+    var swapKey by remember { mutableStateOf(0) }
+
     LaunchedEffect(bookUrl, reloadKey) {
         loading = true
         error = null
         chaptersError = null
+        currentSwap = app.repo.swapOf(bookUrl)
         try {
             val d = app.repo.detail(sourceId, bookUrl, fallbackTitle)
             book = d
@@ -92,6 +103,22 @@ fun DetailScreen(
             error = friendlyError(e)
         } finally {
             loading = false
+        }
+    }
+
+    // 换源：按书名在其它书源里搜索
+    LaunchedEffect(showSwap, swapKey) {
+        if (!showSwap) return@LaunchedEffect
+        val b = book ?: return@LaunchedEffect
+        swapLoading = true
+        swapError = null
+        swapCandidates = emptyList()
+        try {
+            swapCandidates = app.repo.findSwapCandidates(sourceId, bookUrl, b.title, b.author)
+        } catch (e: Exception) {
+            swapError = friendlyError(e)
+        } finally {
+            swapLoading = false
         }
     }
 
@@ -198,6 +225,33 @@ fun DetailScreen(
                         }
                     }
 
+                    // 换源：起点 VIP / 番茄正文抓不到时，用这条路径读全本
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    swapKey++
+                                    showSwap = true
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(if (currentSwap != null) "已换源 · 点击更换" else "换源阅读")
+                            }
+                        }
+                        if (currentSwap != null) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "正文来自「${app.sources.byId(currentSwap!!.sourceId)?.name ?: "其它书源"}」" +
+                                    " ·《${currentSwap!!.matchedTitle}》",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
                     item {
                         SectionTitle("简介")
                         Column(
@@ -288,6 +342,44 @@ fun DetailScreen(
                             nav.navigate(Routes.reader(sourceId, bookUrl, b.title, ch.index))
                         },
                         onDismiss = { showToc = false }
+                    )
+                }
+
+                if (showSwap) {
+                    SwapDialog(
+                        bookTitle = b.title,
+                        loading = swapLoading,
+                        error = swapError,
+                        candidates = swapCandidates,
+                        current = currentSwap,
+                        onPick = { c ->
+                            scope.launch {
+                                app.repo.setSwap(
+                                    BookSwap(
+                                        bookUrl = bookUrl,
+                                        sourceId = c.sourceId,
+                                        sourceBookUrl = c.bookUrl,
+                                        matchedTitle = c.title,
+                                        matchedAuthor = c.author,
+                                        score = c.score
+                                    )
+                                )
+                                showSwap = false
+                                currentSwap = app.repo.swapOf(bookUrl)
+                                // 换源后目录会变，重新拉一次
+                                reloadKey++
+                            }
+                        },
+                        onClearSwap = {
+                            scope.launch {
+                                app.repo.clearSwap(bookUrl)
+                                currentSwap = null
+                                showSwap = false
+                                reloadKey++
+                            }
+                        },
+                        onRetry = { swapKey++ },
+                        onDismiss = { showSwap = false }
                     )
                 }
             }

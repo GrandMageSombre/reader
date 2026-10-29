@@ -47,19 +47,24 @@ object BuiltinSources {
         name = "起点中文",
         baseUrl = "https://m.qidian.com",
         builtinGroup = GROUP,
-        note = "起点移动版公开页：分类书单、书籍详情、完整目录、免费章节正文。" +
-            "VIP 章节只返回试读片段，本项目不绕过付费墙。站内搜索是 JS 挑战页，不支持。",
+        note = "起点移动版公开页：按分类发现书（书名/作者/简介/封面）+ 免费章节正文。" +
+            "VIP 章节抓不到——用「换源」到第三方书源读全本。",
         headers = mapOf("User-Agent" to UA, "Referer" to "https://m.qidian.com/"),
         categories = listOf(
-            // catid：21 玄幻 22 奇幻 23 武侠 24 仙侠 25 都市 27 历史 31 科幻 32 悬疑
+            // catid 来自 https://m.qidian.com/category/ 的导航，实测这些 id 都有书单
             Category("玄幻", "/category/catid21/"),
-            Category("奇幻", "/category/catid22/"),
-            Category("武侠", "/category/catid23/"),
-            Category("仙侠", "/category/catid24/"),
-            Category("都市", "/category/catid25/"),
-            Category("历史", "/category/catid27/"),
-            Category("科幻", "/category/catid31/"),
-            Category("悬疑", "/category/catid32/")
+            Category("奇幻", "/category/catid1/"),
+            Category("武侠", "/category/catid2/"),
+            Category("仙侠", "/category/catid22/"),
+            Category("都市", "/category/catid4/"),
+            Category("历史", "/category/catid5/"),
+            Category("军事", "/category/catid6/"),
+            Category("游戏", "/category/catid7/"),
+            Category("体育", "/category/catid8/"),
+            Category("科幻", "/category/catid9/"),
+            Category("悬疑灵异", "/category/catid10/"),
+            Category("轻小说", "/category/catid12/"),
+            Category("现实", "/category/catid15/")
         ),
         rules = SourceRules(
             // 分类页的书卡：li 带 _bookItem_ 类，书名在 figcaption>h2，作者在紧随其后的 p
@@ -176,27 +181,25 @@ object BuiltinSources {
     // ---------------- 番茄小说 ----------------
 
     /**
-     * 番茄的书籍页是 SSR 的（书名/作者/封面/状态/章节链接都在 HTML 里），
-     * 但分类列表与正文页都要 JS 渲染，静态抓取拿不到——
-     * 所以这里不伪造分类，只保证用详情页链接能打开书籍信息与目录。
+     * 番茄的列表只能通过 JSON 接口拿（HTML 首页的书全在 `__NEXT_DATA__` 里、分页是 JS）。
+     *
+     * 实测：`/api/rank/list?type=N` 只有 type=0/1/2 有数据，每类 7~10 本，`page` 参数无效。
+     * 所以「分类」三项就对应这三个接口，无翻页——这也是为什么要配换源。
      */
     private fun fanqie() = SourceConfig(
-        id = "fanqie",
+        id = FanqieSource.ID,
         name = "番茄小说",
         baseUrl = "https://fanqienovel.com",
         builtinGroup = GROUP,
-        note = "番茄公开书籍页：书名、作者、封面、状态与章节目录。" +
-            "分类列表与正文页由 JS 渲染，静态抓取取不到，因此没有可用分类。",
+        note = "发现源：按分类列出番茄的书（书名/作者/简介/封面）。" +
+            "正文页由 JS 渲染抓不到，请用「换源」到第三方书源阅读。接口每类只有约 10 本、不支持翻页。",
         headers = mapOf("User-Agent" to UA, "Referer" to "https://fanqienovel.com/"),
-        categories = emptyList(),
-        rules = SourceRules(
-            detailName = "h1",
-            detailCover = "img[src*='byteimg']@src",
-            detailStatus = "meta[name='description']@content",
-            chapterList = "a[href^='/reader/']",
-            chapterName = "",
-            chapterLink = "href"
-        )
+        categories = listOf(
+            Category("热榜一", "/api/rank/list?type=0"),
+            Category("热榜二", "/api/rank/list?type=1"),
+            Category("热榜三", "/api/rank/list?type=2")
+        ),
+        rules = SourceRules()
     )
 
     // ---------------- 微信读书 ----------------
@@ -252,6 +255,8 @@ object BuiltinSources {
             listAuthor = "div.btm",
             listCover = "div.image img@data-original",
             listIntro = "dl dd",
+            // 三一小说没有可用的静态搜索页，搜索靠其它源
+            searchUrl = "",
             detailName = "#info h1",
             detailAuthor = "#info p a",
             detailCover = "#fmimg img@src",
@@ -296,13 +301,19 @@ object BuiltinSources {
             Category("排行", "/paihangbang/")
         ),
         rules = SourceRules(
-            searchUrl = "/search.php?keyword={key}",
+            searchUrl = "/modules/article/search.php?searchkey={key}",
+            // 分类页：卡片式 div.item，书名在 dl>dt>a
             listItem = "div.ll div.item, div.l div.item",
             listName = "dl dt a",
             listLink = "dl dt a@href",
             listAuthor = "dl dt span",
             listCover = "div.image img@src",
             listIntro = "dl dd",
+            // 搜索结果页：表格 tr#nr，书名是第一个 td 里的 a，作者是第 3 个 td
+            searchItem = "table.grid tr#nr",
+            searchName = "td:nth-of-type(1) a",
+            searchLink = "td:nth-of-type(1) a@href",
+            searchAuthor = "td:nth-of-type(3)",
             detailName = "#info h1",
             detailAuthor = "#info p",
             detailCover = "#fmimg img@src",

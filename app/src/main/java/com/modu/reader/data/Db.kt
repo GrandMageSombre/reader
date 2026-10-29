@@ -41,6 +41,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, 1) {
                 body TEXT NOT NULL DEFAULT '',
                 ts INTEGER NOT NULL DEFAULT 0)"""
         )
+        createSwapTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -60,6 +61,21 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, 1) {
                 ckey TEXT PRIMARY KEY,
                 body TEXT NOT NULL DEFAULT '',
                 ts INTEGER NOT NULL DEFAULT 0)"""
+        )
+        createSwapTable(db)
+    }
+
+    /** 换源记录：「发现源」的书 -> 第三方源上的书 */
+    private fun createSwapTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS swap(
+                book_url TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL DEFAULT '',
+                source_book_url TEXT NOT NULL DEFAULT '',
+                matched_title TEXT NOT NULL DEFAULT '',
+                matched_author TEXT NOT NULL DEFAULT '',
+                score INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0)"""
         )
     }
 
@@ -211,5 +227,50 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, 1) {
     fun clearAllCache() {
         writableDatabase.delete("content", null, null)
         writableDatabase.delete("chapters", null, null)
+    }
+
+    // ---------------- 换源 ----------------
+
+    fun saveSwap(s: BookSwap) {
+        val cv = ContentValues().apply {
+            put("book_url", s.bookUrl)
+            put("source_id", s.sourceId)
+            put("source_book_url", s.sourceBookUrl)
+            put("matched_title", s.matchedTitle)
+            put("matched_author", s.matchedAuthor)
+            put("score", s.score)
+            put("updated_at", System.currentTimeMillis())
+        }
+        writableDatabase.insertWithOnConflict("swap", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun loadSwap(bookUrl: String): BookSwap? {
+        readableDatabase.rawQuery(
+            "SELECT book_url, source_id, source_book_url, matched_title, matched_author, score" +
+                " FROM swap WHERE book_url=? LIMIT 1",
+            arrayOf(bookUrl)
+        ).use { c ->
+            if (!c.moveToFirst()) return null
+            return BookSwap(
+                bookUrl = c.getString(0),
+                sourceId = c.getString(1),
+                sourceBookUrl = c.getString(2),
+                matchedTitle = c.getString(3),
+                matchedAuthor = c.getString(4),
+                score = c.getInt(5)
+            )
+        }
+    }
+
+    fun clearSwap(bookUrl: String): BookSwap? {
+        val old = loadSwap(bookUrl)
+        writableDatabase.delete("swap", "book_url=?", arrayOf(bookUrl))
+        // 换源后以前的目录/正文缓存都不再适用
+        writableDatabase.delete("chapters", "book_url=?", arrayOf(bookUrl))
+        return old
+    }
+
+    fun clearAllSwap() {
+        writableDatabase.delete("swap", null, null)
     }
 }

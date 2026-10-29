@@ -195,7 +195,27 @@ fun BrowseScreen(nav: NavHostController) {
 
             catsError != null -> ErrorView(catsError!!, onRetry = { reloadKey++ })
 
-            else -> CategoryGrid(cats) { category = it }
+            else -> Column(Modifier.fillMaxSize()) {
+                // 发现源提示：起点/番茄的正文抓不到，要换源
+                if (app.sources.isDiscovery(sourceId)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            "这里是「发现源」：只能看到书名/简介。" +
+                                "打开书后点「换源阅读」，就能用其它书源读正文。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+                CategoryGrid(cats) { category = it }
+            }
         }
     }
 }
