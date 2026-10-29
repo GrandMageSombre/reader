@@ -1,0 +1,37 @@
+{
+  "id": "my_source",
+  "name": "我的书源",
+  "baseUrl": "https://example.com",
+  "charset": "utf-8",
+  "enabled": true,
+  "note": "复制这份模板，把 baseUrl / categories / rules 换成目标站点的选择器",
+  "headers": {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    "Referer": "https://example.com/"
+  },
+  "categories": [
+    { "name": "玄幻", "url": "/list/xuanhuan/{page}.html" },
+    { "name": "都市", "url": "/list/dushi/{page}.html" },
+    { "name": "历史", "url": "/list/lishi/{page}.html" }
+  ],
+  "rules": {
+    "searchUrl": "/search?q={key}&page={page}",
+    "listItem": ".book-list li",
+    "listName": "h3 a@text",
+    "listLink": "h3 a@href",
+    "listAuthor": ".author@text",
+    "listCover": "img@src",
+    "listIntro": ".intro@text",
+    "detailName": "h1@text",
+    "detailAuthor": "#info .author@text",
+    "detailCover": ".cover img@src",
+    "detailIntro": "#intro@text",
+    "detailStatus": ".status@text",
+    "chapterList": "#list dd a",
+    "chapterName": "text",
+    "chapterLink": "href",
+    "chapterReverse": false,
+    "content": "#content",
+    "contentClean": ["script", "style", ".ad", "re:本章未完"]
+  }
+}
