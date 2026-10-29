@@ -86,7 +86,11 @@ fun DetailScreen(
         loading = true
         error = null
         chaptersError = null
-        currentSwap = app.repo.swapOf(bookUrl)
+        try {
+            currentSwap = app.repo.swapOf(bookUrl)
+        } catch (_: Exception) {
+            currentSwap = null
+        }
         try {
             val d = app.repo.detail(sourceId, bookUrl, fallbackTitle)
             book = d
@@ -365,7 +369,11 @@ fun DetailScreen(
                                     )
                                 )
                                 showSwap = false
-                                currentSwap = app.repo.swapOf(bookUrl)
+                                try {
+                                    currentSwap = app.repo.swapOf(bookUrl)
+                                } catch (_: Exception) {
+                                    currentSwap = null
+                                }
                                 // 换源后目录会变，重新拉一次
                                 reloadKey++
                             }

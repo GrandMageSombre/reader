@@ -60,7 +60,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** 通用分页器：列表页和搜索页共用 */
-class Pager<T>(private val fetch: suspend (Int) -> List<T>) {
+class Pager<T>(private val fetch: suspend (Int) -> List<T>, private val keyOf: (T) -> String = { it.toString() }) {
     val items = mutableStateListOf<T>()
     var loading by mutableStateOf(false)
         private set
@@ -87,7 +87,9 @@ class Pager<T>(private val fetch: suspend (Int) -> List<T>) {
                 end = true
             } else {
                 page += 1
-                items.addAll(list)
+                // 真实站点分页常返回重复条目（翻页重叠/榜单+列表），去重避免重复显示
+                val seen = items.mapTo(HashSet<String>()) { keyOf(it) }
+                items.addAll(list.filter { seen.add(keyOf(it)) })
             }
         } catch (e: CancellationException) {
             throw e
@@ -264,7 +266,7 @@ private fun CategoryGrid(cats: List<Category>, onPick: (Category) -> Unit) {
 private fun CategoryBooks(nav: NavHostController, sourceId: String, cat: Category) {
     val app = LocalContext.current.applicationContext as App
     val pager = remember(sourceId, cat) {
-        Pager<Book> { page -> app.repo.list(sourceId, cat, page) }
+        Pager<Book>(fetch = { page -> app.repo.list(sourceId, cat, page) }, keyOf = { it.url })
     }
 
     LaunchedEffect(pager) { pager.reset() }
@@ -294,7 +296,9 @@ fun BookGrid(nav: NavHostController, pager: Pager<Book>) {
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        items(pager.items, key = { it.url }) { book ->
+        // 不用 url 当 key：即使上游有重复数据也只影响复用，不会抛 key 冲突闪退
+        items(pager.items.size) { i ->
+            val book = pager.items[i]
             BookCell(book) {
                 nav.navigate(Routes.detail(book.sourceId, book.url, book.title))
             }

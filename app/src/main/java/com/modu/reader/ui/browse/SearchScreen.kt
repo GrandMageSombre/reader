@@ -41,7 +41,7 @@ fun SearchScreen(nav: NavHostController, sourceId: String, sourceName: String) {
 
     val pager = remember(sourceId, submitted) {
         if (submitted.isBlank()) null
-        else Pager<Book> { page -> app.repo.search(sourceId, submitted, page) }
+        else Pager<Book>(fetch = { page -> app.repo.search(sourceId, submitted, page) }, keyOf = { it.url })
     }
 
     LaunchedEffect(pager) { pager?.reset() }
