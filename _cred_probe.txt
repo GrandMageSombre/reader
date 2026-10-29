@@ -1,6 +1,0 @@
-== C:\Users\Administrator/.git-credentials exists=False
-== C:\Users\Administrator\Desktop\player\.git\config exists=True
-   	url = https://github.com/GrandMageSombre/hotshow.git
-== C:\Users\Administrator\Desktop\skill\.git\config exists=True
-   	url = https://github.com/GrandMageSombre/AI-SKILL.git
-== GCM dir: C:\Users\Administrator\AppData\Local\GitCredentialManager exists=False

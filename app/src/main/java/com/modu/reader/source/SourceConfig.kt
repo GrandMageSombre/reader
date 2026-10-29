@@ -19,10 +19,13 @@ data class SourceRules(
     val detailIntro: String = "",
     val detailStatus: String = "",
     val chapterList: String = "",
+    val chapterUrl: String = "",
     val chapterName: String = "",
     val chapterLink: String = "",
+    val chapterNext: String = "",
     val chapterReverse: Boolean = false,
     val content: String = "",
+    val contentNext: String = "",
     val contentClean: List<String> = emptyList()
 )
 
@@ -38,6 +41,10 @@ data class SourceConfig(
     val charset: String = "",
     val enabled: Boolean = true,
     val builtin: Boolean = false,
+    /** 内置源分组名（如「内置」）；非内置源为空串 */
+    val builtinGroup: String = "",
+    /** 这个源是从哪来的：`内置` / `导入` / `第三方`，用于书源管理页展示 */
+    val origin: String = "",
     val note: String = "",
     val headers: Map<String, String> = emptyMap(),
     val categories: List<Category> = emptyList(),
@@ -94,6 +101,8 @@ data class SourceConfig(
                 charset = o.optString("charset").trim(),
                 enabled = o.optBoolean("enabled", true),
                 builtin = o.optBoolean("builtin", false),
+                builtinGroup = o.optString("builtinGroup").trim(),
+                origin = o.optString("origin").trim(),
                 note = o.optString("note").trim(),
                 headers = hs,
                 categories = cats,
@@ -111,10 +120,13 @@ data class SourceConfig(
                     detailIntro = ro.optString("detailIntro"),
                     detailStatus = ro.optString("detailStatus"),
                     chapterList = ro.optString("chapterList"),
+                    chapterUrl = ro.optString("chapterUrl"),
                     chapterName = ro.optString("chapterName"),
                     chapterLink = ro.optString("chapterLink"),
+                    chapterNext = ro.optString("chapterNext"),
                     chapterReverse = ro.optBoolean("chapterReverse", false),
                     content = ro.optString("content"),
+                    contentNext = ro.optString("contentNext"),
                     contentClean = clean
                 )
             )
@@ -127,6 +139,8 @@ data class SourceConfig(
             o.put("baseUrl", cfg.baseUrl)
             o.put("charset", cfg.charset)
             o.put("enabled", cfg.enabled)
+            if (cfg.builtinGroup.isNotBlank()) o.put("builtinGroup", cfg.builtinGroup)
+            if (cfg.origin.isNotBlank()) o.put("origin", cfg.origin)
             if (cfg.note.isNotBlank()) o.put("note", cfg.note)
             if (cfg.headers.isNotEmpty()) {
                 val h = JSONObject()
@@ -154,10 +168,13 @@ data class SourceConfig(
             ro.put("detailIntro", r.detailIntro)
             ro.put("detailStatus", r.detailStatus)
             ro.put("chapterList", r.chapterList)
+            ro.put("chapterUrl", r.chapterUrl)
             ro.put("chapterName", r.chapterName)
             ro.put("chapterLink", r.chapterLink)
+            ro.put("chapterNext", r.chapterNext)
             ro.put("chapterReverse", r.chapterReverse)
             ro.put("content", r.content)
+            ro.put("contentNext", r.contentNext)
             val ca = JSONArray()
             r.contentClean.forEach { ca.put(it) }
             ro.put("contentClean", ca)

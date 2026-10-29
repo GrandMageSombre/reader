@@ -12,8 +12,8 @@ android {
         applicationId = "com.modu.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 4
+        versionName = "1.3.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -48,6 +48,17 @@ android {
         abortOnError = false
         checkReleaseBuilds = false
     }
+
+    testOptions {
+        unitTests {
+            // org.json 用 testImplementation("org.json:json") 提供的真实实现，
+            // 这里不要再开 isReturnDefaultValues —— 那会让未实现方法返回 null/0，
+            // 规则转换失败时静默产出错数据，比直接报错更糟。
+            all {
+                it.systemProperty("file.encoding", "UTF-8")
+            }
+        }
+    }
 }
 
 kotlin {
@@ -72,6 +83,10 @@ dependencies {
 
     implementation("org.jsoup:jsoup:1.23.2")
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    testImplementation("junit:junit:4.13.2")
+    // 单元测试里提供真实的 org.json 实现（Android SDK 的同名类是未实现桩）
+    testImplementation("org.json:json:20240303")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

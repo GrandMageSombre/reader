@@ -1,6 +1,0 @@
-目标: LegacyGeneric:target=git:https://github.com
-    类型: 普通
-    用户: GrandMageSombre
----
-helper: !"D:/WorkBuddyData/.workbuddy/binaries/PortableGit/versions/1.2.0/mingw64/bin/git-credential-manager.exe"
-system helper: helper-selector

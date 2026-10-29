@@ -4,7 +4,7 @@
   "baseUrl": "https://example.com",
   "charset": "utf-8",
   "enabled": true,
-  "note": "复制这份模板，把 baseUrl / categories / rules 换成目标站点的选择器",
+  "note": "复制这份模板，把 baseUrl / categories / rules 换成目标站点的选择器。目录或正文分页时再填 chapterUrl{page} / chapterNext / contentNext（见 docs/书源规则.md）",
   "headers": {
     "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "Referer": "https://example.com/"
@@ -28,10 +28,13 @@
     "detailIntro": "#intro@text",
     "detailStatus": ".status@text",
     "chapterList": "#list dd a",
+    "chapterUrl": "",
     "chapterName": "text",
     "chapterLink": "href",
+    "chapterNext": "",
     "chapterReverse": false,
     "content": "#content",
+    "contentNext": "",
     "contentClean": ["script", "style", ".ad", "re:本章未完"]
   }
 }

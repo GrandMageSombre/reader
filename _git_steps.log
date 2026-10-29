@@ -1,6 +1,0 @@
-start, .git exists=False
-[git-version] rc=0 out='git version 2.55.0.windows.3\n' err=''
-[global-name] rc=0 out='GrandMageSombre\n' err=''
-[global-email] rc=0 out='1812382926@qq.com\n' err=''
-[credential] TIMEOUT after 40s
-end

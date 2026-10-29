@@ -20,19 +20,53 @@ import org.jsoup.nodes.TextNode
  */
 object Rule {
 
-    private val ATTRS = setOf("text", "html", "ownText", "href", "src", "title", "alt", "value")
+    /**
+     * 可以出现在 `@` 后面的取值关键字。
+     *
+     * 必须严格白名单：如果放宽成「任意标识符」，那么 `listName = "a"`（裸标签选择器）
+     * 会被误判成「对当前节点取 a 属性」，选择器变空、规则静默失效。
+     * 需要取任意属性时用 `attr:xxx`。
+     */
+    private val ATTRS = setOf(
+        "text", "html", "ownText", "href", "src", "title", "alt", "value",
+        "content", "id", "class", "name", "datetime"
+    )
 
+    /** `@` 后面是否是取值（关键字 / attr: / abs: / data-* 属性） */
     private fun isAttrToken(s: String): Boolean =
-        s in ATTRS || s.startsWith("attr:") || s.startsWith("abs:")
+        s in ATTRS || s.startsWith("attr:") || s.startsWith("abs:") ||
+            s.startsWith("data-")
 
+    /**
+     * 拆分 `选择器@取值`。
+     *
+     * 注意：`@` 也可能出现在 CSS 属性选择器里（如 `meta[property='og:image']@content`），
+     * 裸取值的 `@` 只能在**引号之外**找，否则会把选择器从引号中间劈开。
+     */
     private fun split(rule: String): Pair<String, String> {
         val r = rule.trim()
-        val i = r.lastIndexOf('@')
-        if (i < 0) {
-            return if (isAttrToken(r)) "" to r else r to "text"
-        }
+        if (isAttrToken(r)) return "" to r
+        val i = lastAtOutsideQuotes(r)
+        if (i < 0) return r to "text"
         val tail = r.substring(i + 1).trim()
         return if (isAttrToken(tail)) r.substring(0, i).trim() to tail else r to "text"
+    }
+
+    /** 找到最后一个不在引号内的 `@`，找不到返回 -1 */
+    private fun lastAtOutsideQuotes(s: String): Int {
+        var quote: Char? = null
+        var result = -1
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            when {
+                quote != null -> if (c == quote) quote = null
+                c == '\'' || c == '"' -> quote = c
+                c == '@' -> result = i
+            }
+            i++
+        }
+        return result
     }
 
     fun selectAll(rule: String?, root: Element): List<Element> {

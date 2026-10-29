@@ -11,3 +11,5 @@
 local.properties
 .kotlin/
 releases/
+# 工具运行时目录
+.reasonix/
