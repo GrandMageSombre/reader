@@ -44,6 +44,10 @@ object SettingsStore {
     var paragraphSpacing by mutableStateOf(0.8f)
         private set
 
+    /** 启动声明：每次打开都弹（用户可在弹窗里取消勾选） */
+    var showDisclaimer by mutableStateOf(true)
+        private set
+
     fun init(ctx: Context) {
         if (sp != null) return
         val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -55,6 +59,7 @@ object SettingsStore {
         keepScreenOn = p.getBoolean("keep_screen_on", true)
         brightness = p.getFloat("brightness", -1f)
         paragraphSpacing = p.getFloat("paragraph_spacing", 0.8f)
+        showDisclaimer = p.getBoolean("show_disclaimer", true)
     }
 
     fun updateFontSize(v: Float) {
@@ -90,5 +95,10 @@ object SettingsStore {
     fun updateBrightness(v: Float) {
         brightness = v
         sp?.edit()?.putFloat("brightness", v)?.apply()
+    }
+
+    fun updateShowDisclaimer(v: Boolean) {
+        showDisclaimer = v
+        sp?.edit()?.putBoolean("show_disclaimer", v)?.apply()
     }
 }

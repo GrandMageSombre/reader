@@ -35,6 +35,22 @@ open class HtmlSource(
             Jsoup.parse(Http.get(url, cfg.charset, cfg.headers), url)
         }
 
+    /** listClean：re: 前缀为正则，其余为字面量；命中部分从书名/作者里删除 */
+    private fun cleanText(s: String): String {
+        var v = s
+        r.listClean.forEach { raw ->
+            if (raw.startsWith("re:")) {
+                try {
+                    v = v.replace(Regex(raw.removePrefix("re:")), "")
+                } catch (_: Exception) {
+                }
+            } else {
+                v = v.replace(raw, "")
+            }
+        }
+        return v.trim()
+    }
+
     private fun abs(base: String, link: String): String {
         val l = link.trim()
         if (l.isEmpty()) return ""
@@ -44,8 +60,14 @@ open class HtmlSource(
             l.startsWith("data:") || l.startsWith("about:")
         ) return ""
         if (l.startsWith("http://") || l.startsWith("https://")) return l
+        // 协议相对地址（//host/path）——起点书卡/封面都是这种写法，
+        // 直接丢给 URI.resolve 会因无 scheme 失败或拼错，先补上基准页的协议
+        val link = if (l.startsWith("//")) {
+            val scheme = if (base.contains("://")) base.substringBefore("://") else "https"
+            "$scheme:$l"
+        } else l
         val resolved = try {
-            URI(base).resolve(l).toString()
+            URI(base).resolve(link).toString()
         } catch (e: Exception) {
             return ""
         }
@@ -97,9 +119,10 @@ open class HtmlSource(
         intro: String = r.listIntro
     ): List<Book> {
         val items = Rule.selectAll(item, doc)
+
         val out = ArrayList<Book>(items.size)
         items.forEach { el ->
-            val title = Rule.eval(name.ifBlank { "a@text" }, el)
+            val title = cleanText(Rule.eval(name.ifBlank { "a@text" }, el))
             val linkUrl = Rule.eval(link.ifBlank { "a@href" }, el)
             if (title.isBlank() || linkUrl.isBlank()) return@forEach
             out.add(
@@ -107,7 +130,7 @@ open class HtmlSource(
                     sourceId = cfg.id,
                     url = abs(pageUrl, linkUrl),
                     title = title,
-                    author = Rule.eval(author, el),
+                    author = cleanText(Rule.eval(author, el)),
                     cover = abs(pageUrl, Rule.eval(cover, el)),
                     intro = Rule.eval(intro, el)
                 )
@@ -118,8 +141,8 @@ open class HtmlSource(
 
     override suspend fun detail(book: Book): Book {
         val doc = load(book.url)
-        val name = Rule.eval(r.detailName, doc)
-        val author = Rule.eval(r.detailAuthor, doc)
+        val name = cleanText(Rule.eval(r.detailName, doc))
+        val author = cleanText(Rule.eval(r.detailAuthor, doc))
         val cover = Rule.eval(r.detailCover, doc)
         val intro = Rule.eval(r.detailIntro, doc)
         val status = Rule.eval(r.detailStatus, doc)

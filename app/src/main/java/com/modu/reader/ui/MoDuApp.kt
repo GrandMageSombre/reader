@@ -13,6 +13,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -61,6 +64,7 @@ object Routes {
 fun MoDuApp() {
     val nav = rememberNavController()
     val dark = SettingsStore.themeIndex == ReaderPalette.NIGHT.ordinal
+    var showDisclaimer by remember { mutableStateOf(SettingsStore.showDisclaimer) }
 
     MoDuTheme(dark = dark) {
         val view = LocalView.current
@@ -85,6 +89,9 @@ fun MoDuApp() {
                 }
             }
         ) { pad ->
+            if (showDisclaimer) {
+                DisclaimerDialog(onDismiss = { showDisclaimer = false })
+            }
             NavHost(
                 navController = nav,
                 startDestination = Routes.SHELF,

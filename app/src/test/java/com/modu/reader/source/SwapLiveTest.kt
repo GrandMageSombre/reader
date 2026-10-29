@@ -69,7 +69,7 @@ class SwapLiveTest {
         val books = fanqie.list(fanqie.categories().first(), 1)
         assertTrue("番茄应返回书", books.isNotEmpty())
 
-        val pool = listOf("s31xs", "wangshu").mapNotNull { id ->
+        val pool = listOf("xbiquwk", "wangshu").mapNotNull { id ->
             BuiltinSources.all().firstOrNull { it.id == id }?.let { HtmlSource(it) }
         }
         var hit = 0

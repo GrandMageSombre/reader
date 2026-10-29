@@ -47,12 +47,17 @@ class BuiltinSourceRulesTest {
         val src = sourceOf("qidian", mapOf("https://m.qidian.com/category/" to "qidian_list.html"))
         val list = src.list(com.modu.reader.data.Category("玄幻", "/category/catid21/"), 1)
 
-        assertTrue("分类书单应能解析出书（实际 ${list.size} 本）", list.isNotEmpty())
+        // 分类页的入口是 a[href*=/book/]（完整卡片只有 5 张，其余书名在 img@alt）
+        assertTrue("分类书单应有 20+ 本（实际 ${list.size} 本）", list.size >= 20)
         val first = list.first()
         assertTrue("书名不能为空", first.title.isNotBlank())
-        assertTrue("链接必须是绝对地址", first.url.startsWith("https://m.qidian.com/book/"))
+        assertTrue("书名不该残留「在线阅读」后缀（实际 ${first.title}）", !first.title.endsWith("在线阅读"))
+        // 协议相对地址 //m.qidian.com/... 必须被补成绝对地址
+        assertTrue("链接必须是绝对地址（实际 ${first.url}）", first.url.startsWith("https://m.qidian.com/book/"))
         assertTrue("封面不能为空", first.cover.isNotBlank())
+        assertTrue("封面也应是绝对地址（实际 ${first.cover}）", first.cover.startsWith("http"))
         assertEquals("qidian", first.sourceId)
+        assertEquals("同一本书的重复入口应去重", list.size, list.map { it.url }.toSet().size)
     }
 
     @Test
@@ -185,54 +190,68 @@ class BuiltinSourceRulesTest {
         )
     }
 
-    // ---------------- 三一小说（31xs） ----------------
+    // ---------------- 笔尖中文（xbiquwk） ----------------
 
     @Test
-    fun `三一小说分类书单能取到书名、链接、封面、简介`() = runBlocking {
-        val src = sourceOf("s31xs", mapOf("https://www.31xs.com/fenlei/" to "s31_cat.html"))
-        val list = src.list(com.modu.reader.data.Category("玄幻魔法", "/fenlei/1/{page}.html"), 1)
+    fun `笔尖中文分类书单能取到书名、链接、作者`() = runBlocking {
+        val src = sourceOf("xbiquwk", mapOf("http://www.xbiquwk.com/list/" to "xbq_cat.html"))
+        val list = src.list(com.modu.reader.data.Category("玄幻小说", "/list/1_1.html"), 1)
 
-        assertTrue("分类书单应有内容（实际 ${list.size}）", list.size >= 3)
+        assertTrue("分类书单应有 20+ 本（实际 ${list.size}）", list.size >= 20)
         val first = list.first()
         assertTrue("书名不能为空", first.title.isNotBlank())
-        assertTrue("链接应是绝对地址", first.url.startsWith("https://www.31xs.com/"))
-        assertTrue("简介应取到", first.intro.isNotBlank())
+        assertTrue("链接应是绝对地址（实际 ${first.url}）", first.url.startsWith("http://www.xbiquwk.com/"))
+        assertTrue("作者应取到", first.author.isNotBlank())
     }
 
     @Test
-    fun `三一小说详情页能取到书名、作者、封面、简介`() = runBlocking {
-        val src = sourceOf("s31xs", mapOf("https://www.31xs.com/649/" to "s31_book.html"))
-        val b = src.detail(Book("s31xs", "https://www.31xs.com/649/649464/", "占位"))
+    fun `笔尖中文详情页能取到书名、作者（剥前缀）、封面、简介`() = runBlocking {
+        val src = sourceOf("xbiquwk", mapOf("http://www.xbiquwk.com/0_383/" to "xbq_book.html"))
+        val b = src.detail(Book("xbiquwk", "http://www.xbiquwk.com/0_383/", "占位"))
 
-        assertTrue("书名应含站点原名", b.title.contains("1号专案组"))
-        assertEquals("作者应取到", "陈玉福", b.author)
+        assertEquals("元尊", b.title)
+        assertEquals("作者应剥掉「作 者:」前缀", "天蚕土豆", b.author)
         assertTrue("封面应取到", b.cover.isNotBlank())
-        assertTrue("简介应取到（实际 ${b.intro.length} 字）", b.intro.length > 20)
+        assertTrue("简介应取到（实际 ${b.intro.length} 字）", b.intro.length > 10)
     }
 
     @Test
-    fun `三一小说目录能取到完整章节列表`() = runBlocking {
-        val src = sourceOf("s31xs", mapOf("https://www.31xs.com/649/" to "s31_book.html"))
-        val list = src.chapters(Book("s31xs", "https://www.31xs.com/649/649464/", "1号专案组"))
+    fun `笔尖中文目录能取到完整章节列表`() = runBlocking {
+        val src = sourceOf("xbiquwk", mapOf("http://www.xbiquwk.com/0_383/" to "xbq_book.html"))
+        val list = src.chapters(Book("xbiquwk", "http://www.xbiquwk.com/0_383/", "元尊"))
 
-        assertTrue("目录应有较多章节（实际 ${list.size}）", list.size >= 20)
+        assertTrue("目录应有大量章节（实际 ${list.size}）", list.size >= 500)
         assertEquals(0, list.first().index)
-        assertTrue("章节链接应是绝对地址", list.first().url.startsWith("https://www.31xs.com/649/"))
-        assertTrue("章节名不能为空", list.first().title.isNotBlank())
+        assertTrue("章节链接应是绝对地址", list.first().url.startsWith("http://www.xbiquwk.com/0_383/"))
     }
 
     @Test
-    fun `三一小说正文能取到成段文字`() = runBlocking {
-        val src = sourceOf("s31xs", mapOf("https://www.31xs.com/649/649464/" to "s31_chap.html"))
+    fun `笔尖中文正文能取到成段文字`() = runBlocking {
+        val src = sourceOf(
+            "xbiquwk",
+            mapOf(
+                "http://www.xbiquwk.com/0_383/1596644.html" to "xbq_chap.html",
+                "http://www.xbiquwk.com/0_383/" to "xbq_book.html"
+            )
+        )
         val text = src.content(
-            Book("s31xs", "https://www.31xs.com/649/649464/", "1号专案组"),
-            Chapter(0, "第二十章", "https://www.31xs.com/649/649464/177404375.html")
+            Book("xbiquwk", "http://www.xbiquwk.com/0_383/", "元尊"),
+            Chapter(0, "第一章", "http://www.xbiquwk.com/0_383/1596644.html")
         )
 
-        assertTrue("正文应有内容（实际 ${text.length} 字）", text.length > 500)
-        assertTrue("正文应含页面原句", text.contains("省委书记"))
-        // contentClean 应去掉站点尾巴
-        assertTrue("不该残留站点广告", !text.contains("咪咪阅读"))
+        assertTrue("正文应有内容（实际 ${text.length} 字）", text.length > 200)
+    }
+
+    @Test
+    fun `笔尖中文搜索能取到结果表格`() = runBlocking {
+        val src = sourceOf("xbiquwk", mapOf("http://www.xbiquwk.com/modules/article/search.php" to "xbq_search.html"))
+        val list = src.search("斗罗", 1)
+
+        assertTrue("搜索应有结果（实际 ${list.size}）", list.size >= 3)
+        val first = list.first()
+        assertTrue("书名应含关键字", first.title.contains("斗罗"))
+        assertTrue("链接应是绝对地址（实际 ${first.url}）", first.url.startsWith("http://www.xbiquwk.com/"))
+        assertTrue("作者应取到", first.author.isNotBlank())
     }
 
     // ---------------- 望书网 ----------------

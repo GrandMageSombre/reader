@@ -124,10 +124,11 @@ fun SettingsScreen(nav: NavHostController) {
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(16.dp)
         ) {
-            Text("墨读 v1.0.0", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
+            Text("reader v1.5.0", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(6.dp))
             Text(
                 "一个只用规则驱动的阅读器：书城分类、目录、正文全部来自书源 JSON，换站点不用改代码。\n\n" +
+                    "本软件为 umena 个人自用软件，禁止商业用途。\n" +
                     "应用本身不内置、不代理任何第三方站点内容；书源由使用者自行维护，内容版权与可用性由使用者自行判断。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

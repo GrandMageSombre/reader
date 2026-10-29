@@ -45,6 +45,7 @@ import com.modu.reader.App
 import com.modu.reader.R
 import com.modu.reader.data.ShelfBook
 import com.modu.reader.ui.CoverImage
+import com.modu.reader.ui.DisclaimerDialog
 import com.modu.reader.ui.EmptyView
 import com.modu.reader.ui.Routes
 import com.modu.reader.ui.VIcon
@@ -58,6 +59,7 @@ fun ShelfScreen(nav: NavHostController) {
 
     var books by remember { mutableStateOf<List<ShelfBook>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
+    var showDecl by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         books = app.repo.shelf()
@@ -83,9 +85,16 @@ fun ShelfScreen(nav: NavHostController) {
                 )
             }
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = { showDecl = true }) {
+                VIcon(R.drawable.ic_info, "使用声明", modifier = Modifier.size(22.dp))
+            }
             IconButton(onClick = { nav.navigate(Routes.BROWSE) }) {
                 VIcon(R.drawable.ic_search, "去书城找书", modifier = Modifier.size(22.dp))
             }
+        }
+
+        if (showDecl) {
+            DisclaimerDialog(onDismiss = { showDecl = false })
         }
 
         if (loaded && books.isEmpty()) {

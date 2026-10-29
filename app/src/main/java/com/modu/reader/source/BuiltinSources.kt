@@ -15,9 +15,10 @@ import com.modu.reader.data.Category
  * | 内置源 | 能拿到 | 拿不到 | 默认 |
  * |--------|--------|--------|------|
  * | 示例书库 | 本地公版节选，全部离线 | — | ✅ 开 |
- * | 三一小说（31xs） | 分类书单、完整目录、正文全文 | — | ✅ 开 |
- * | 望书网 | 分类书单、目录、正文、站内搜索 | — | 关 |
- * | 起点中文（移动版） | 分类书单、详情、完整目录、免费章节正文 | VIP 正文、站内搜索 | 关 |
+ * | 笔尖中文 | 分类书单、完整目录、正文全文、站内搜索 | — | ✅ 开 |
+ * | 笔尖中文·镜像 | 同上（备用域名） | — | 关 |
+ * | 望书网 | 分类书单、目录、正文、站内搜索 | — | ✅ 开 |
+ * | 起点中文（移动版） | 分类书单、详情、最近章节目录、免费章节正文 | VIP 正文、站内搜索、翻页 | 关 |
  * | 豆瓣图书 | 标签书单、书名/作者/出版社/评分/简介/封面 | 正文（豆瓣不提供） | 关 |
  * | 古登堡计划 | 中文公版书全文 | — | ✅ 开 |
  * | 番茄小说 | 书籍页的书名/作者/封面/状态 | 分类书单、正文 | 关 |
@@ -34,7 +35,7 @@ object BuiltinSources {
      * 只放「不涉及第三方聚合站」的源（本地示例库 + 公版书），
      * 其余一律默认关闭，让用户自己选——第三方聚合站的可用性与版权状态差异很大。
      */
-    val DEFAULT_ON: Set<String> = setOf("demo", "s31xs", "gutenberg")
+    val DEFAULT_ON: Set<String> = setOf("demo", "xbiquwk", "wangshu", "gutenberg")
 
     private const val UA =
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
@@ -48,10 +49,11 @@ object BuiltinSources {
         baseUrl = "https://m.qidian.com",
         builtinGroup = GROUP,
         note = "起点移动版公开页：按分类发现书（书名/作者/简介/封面）+ 免费章节正文。" +
-            "VIP 章节抓不到——用「换源」到第三方书源读全本。",
+            "目录只服务端渲染最新 20 章左右；VIP 章节抓不到——用「换源」到第三方书源读全本。",
         headers = mapOf("User-Agent" to UA, "Referer" to "https://m.qidian.com/"),
         categories = listOf(
-            // catid 来自 https://m.qidian.com/category/ 的导航，实测这些 id 都有书单
+            // catid 来自 https://m.qidian.com/category/ 的导航，实测这些 id 都有书单；
+            // 分类页无服务端分页（page2 返回同样内容），每页约 30 本
             Category("玄幻", "/category/catid21/"),
             Category("奇幻", "/category/catid1/"),
             Category("武侠", "/category/catid2/"),
@@ -67,12 +69,15 @@ object BuiltinSources {
             Category("现实", "/category/catid15/")
         ),
         rules = SourceRules(
-            // 分类页的书卡：li 带 _bookItem_ 类，书名在 figcaption>h2，作者在紧随其后的 p
-            listItem = "li[class*=_bookItem_]",
-            listName = "h2",
-            listLink = "a@href",
-            listAuthor = "p",
+            // 分类页所有书的入口都是 a.auto-tr[href*=/book/]（协议相对地址 //m.qidian.com/...，
+            // 由引擎的 abs() 补协议）。完整书卡只有 5 张（li 带 figcaption），其余书名在 img@alt 里
+            listItem = "a.auto-tr[href*='/book/']",
+            listName = "img@alt",
+            listLink = "href",
+            listAuthor = "",
             listCover = "img@data-src",
+            // img@alt 是「书名在线阅读」，a@title 是「书名最新章节在线阅读」，统一剥后缀
+            listClean = listOf("re:最新章节在线阅读$", "re:在线阅读$"),
             // 详情页有完整的 og:novel:* 元信息
             detailName = "h1",
             detailAuthor = "meta[property='og:novel:author']@content",
@@ -224,43 +229,44 @@ object BuiltinSources {
         )
     )
 
-    // ---------------- 三一小说（31xs） ----------------
+    // ---------------- 笔尖中文（xbiquwk，笔趣阁模板） ----------------
 
     /**
-     * 笔趣阁系模板站：分类书单、详情、目录、正文全都是服务端渲染，召回率最高的一个。
-     * 已在真实页面核对：分类页 `div.l div.item`（书名 dl>dt>a）、目录 `#list dd a`、
-     * 正文 `#content`（内含 `#booktxt`，165 段 <p>）。
+     * 笔趣阁模板站（2026-10 实测全链路可用）：
+     * 分类 `#newscontent li`（书名 span.s2 a、作者 span.s4）、
+     * 详情 `#info h1`、目录 `#list dd a`（一本书 1500+ 章全是 SSR）、正文 `#content`、
+     * 搜索 `search.php?searchkey={key}`（UTF-8），结果表格 `tr:has(td.odd)`。
+     * 作者字段是「作&nbsp;者:XXX」，用 listClean 剥前缀（同样应用于详情作者）。
      */
-    private fun s31xs() = SourceConfig(
-        id = "s31xs",
-        name = "三一小说",
-        baseUrl = "https://www.31xs.com",
+    private fun xbiquwk(id: String, name: String, host: String, note: String) = SourceConfig(
+        id = id,
+        name = name,
+        baseUrl = host,
         builtinGroup = GROUP,
-        note = "笔趣阁系模板站：分类书单、完整目录、正文都可直接读。" +
-            "站点为聚合性质，内容版权状态请自行判断。",
-        headers = mapOf("User-Agent" to UA, "Referer" to "https://www.31xs.com/"),
+        note = note,
+        headers = mapOf("User-Agent" to UA, "Referer" to "$host/"),
         categories = listOf(
-            Category("玄幻魔法", "/fenlei/1/{page}.html"),
-            Category("武侠修真", "/fenlei/2/{page}.html"),
-            Category("都市言情", "/fenlei/3/{page}.html"),
-            Category("历史军事", "/fenlei/4/{page}.html"),
-            Category("科幻灵异", "/fenlei/5/{page}.html"),
-            Category("游戏竞技", "/fenlei/6/{page}.html")
+            Category("玄幻小说", "/list/1_{page}.html"),
+            Category("修真小说", "/list/2_{page}.html"),
+            Category("都市小说", "/list/3_{page}.html"),
+            Category("穿越小说", "/list/4_{page}.html"),
+            Category("网游小说", "/list/5_{page}.html"),
+            Category("科幻小说", "/list/6_{page}.html")
         ),
         rules = SourceRules(
-            // 分类页书卡：div.l / div.ll 下的 div.item
-            listItem = "div.l div.item, div.ll div.item",
-            listName = "dl dt a",
-            listLink = "dl dt a@href",
-            listAuthor = "div.btm",
-            listCover = "div.image img@data-original",
-            listIntro = "dl dd",
-            // 三一小说没有可用的静态搜索页，搜索靠其它源
-            searchUrl = "",
+            searchUrl = "/modules/article/search.php?searchkey={key}",
+            listItem = "#newscontent li",
+            listName = "span.s2 a",
+            listLink = "span.s2 a@href",
+            listAuthor = "span.s4",
+            listClean = listOf("re:^作\\s*者[:：]\\s*"),
+            searchItem = "tr:has(td.odd)",
+            searchName = "td.odd a",
+            searchLink = "td.odd a@href",
+            searchAuthor = "td:nth-of-type(3)",
             detailName = "#info h1",
-            detailAuthor = "#info p a",
+            detailAuthor = "#info p",
             detailCover = "#fmimg img@src",
-            // #intro 里是简介，站点用 <br> 换行
             detailIntro = "#intro",
             chapterList = "#list dd a",
             chapterName = "text",
@@ -268,13 +274,23 @@ object BuiltinSources {
             content = "#content",
             contentClean = listOf(
                 "script", "style",
-                "re:^\\s*加入书签.*$",
                 "re:^\\s*请记住本书首发域名.*$",
-                "re:.*咪.*咪.*阅.*读.*",
-                "re:.*换源App.*",
-                "re:^\\s*本章未完.*$"
+                "re:.*笔.*趣.*阁.*",
+                "re:^\\s*本章未完.*$",
+                "re:^\\s*（本章完）\\s*$"
             )
         )
+    )
+
+    private fun xbiquwkMain() = xbiquwk(
+        "xbiquwk", "笔尖中文", "http://www.xbiquwk.com",
+        "笔趣阁系模板站：分类、完整目录、正文、站内搜索都可读（2026-10 全链路实测）。" +
+            "站点为聚合性质，内容版权状态请自行判断。"
+    )
+
+    private fun xbiquwkMirror() = xbiquwk(
+        "biquwx", "笔尖中文·镜像", "https://www.biquwx.la",
+        "笔尖中文的备用镜像，主站打不开时手动启用。"
     )
 
     // ---------------- 望书网（wangshuwx） ----------------
@@ -338,7 +354,8 @@ object BuiltinSources {
     /** 全部内置源，顺序即书城里的展示顺序 */
     fun all(): List<SourceConfig> = listOf(
         demo(),
-        s31xs(),
+        xbiquwkMain(),
+        xbiquwkMirror(),
         wangshu(),
         qidian(),
         douban(),

@@ -14,6 +14,12 @@ data class SourceRules(
     val listLink: String = "",
     val listIntro: String = "",
     /**
+     * 列表/搜索结果的「书名 / 作者」清洗规则，按顺序应用：
+     * `re:xxx` 是正则（命中部分被删除），其余当字面量删除。
+     * 典型用途：起点书卡的书名取自 img@alt，尾部带「在线阅读」后缀。
+     */
+    val listClean: List<String> = emptyList(),
+    /**
      * 搜索结果页与分类页结构不同时，用这组规则覆盖 [listItem] 等。
      * 留空表示搜索结果页复用列表页规则。
      *
@@ -87,6 +93,14 @@ data class SourceConfig(
                     if (s.isNotBlank()) clean.add(s)
                 }
             }
+            val lcArray = ro.optJSONArray("listClean")
+            val listClean = ArrayList<String>()
+            if (lcArray != null) {
+                for (i in 0 until lcArray.length()) {
+                    val s = lcArray.optString(i)
+                    if (s.isNotBlank()) listClean.add(s)
+                }
+            }
 
             val cats = ArrayList<Category>()
             o.optJSONArray("categories")?.let { arr ->
@@ -127,6 +141,7 @@ data class SourceConfig(
                     listCover = ro.optString("listCover"),
                     listLink = ro.optString("listLink"),
                     listIntro = ro.optString("listIntro"),
+                    listClean = listClean,
                     searchItem = ro.optString("searchItem"),
                     searchName = ro.optString("searchName"),
                     searchLink = ro.optString("searchLink"),
@@ -181,6 +196,9 @@ data class SourceConfig(
             ro.put("listCover", r.listCover)
             ro.put("listLink", r.listLink)
             ro.put("listIntro", r.listIntro)
+            val lca = JSONArray()
+            r.listClean.forEach { lca.put(it) }
+            ro.put("listClean", lca)
             ro.put("searchItem", r.searchItem)
             ro.put("searchName", r.searchName)
             ro.put("searchLink", r.searchLink)
