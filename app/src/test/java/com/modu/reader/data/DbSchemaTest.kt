@@ -107,4 +107,19 @@ class DbSchemaTest {
                 assertTrue("swap 表缺少列 $col", swapDdl.contains(col))
             }
     }
+
+    @Test
+    fun `整本下载进度表会随版本升级一起建出来`() {
+        val dbSrc = source("Db.kt")
+        assertTrue(
+            "DB_VERSION 必须是 3 及以上（download_task 是 v3 加的）",
+            Db.DB_VERSION >= 3
+        )
+        assertTrue("要有 download_task 建表语句", dbSrc.contains("download_task"))
+        assertTrue(
+            "onCreate / onUpgrade 都要调用 createDownloadTable，否则老用户升上来会缺表",
+            dbSrc.split("createDownloadTable(db)").size - 1 >= 3
+        )
+        assertTrue("进度要能读出来", dbSrc.contains("fun downloadTask("))
+    }
 }

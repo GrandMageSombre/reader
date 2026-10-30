@@ -90,6 +90,16 @@ fun DetailScreen(
     val deviceState = crawlMine?.message.orEmpty()
 
     // 抓完后直接从本地库刷新目录，不再联网（避免把抓取成功反显成加载失败）
+    // 整本下载进度（从本地库读，进入页面时刷新一次）
+    var downloadDone by remember { mutableStateOf(0) }
+    var downloadTotal by remember { mutableStateOf(0) }
+    LaunchedEffect(bookUrl, crawlMine?.finished, crawlMine?.message) {
+        app.repo.downloadProgress(bookUrl)?.let {
+            downloadDone = it.first
+            downloadTotal = it.second
+        }
+    }
+
     LaunchedEffect(crawlMine?.finished, crawlMine?.message) {
         if (crawlMine?.finished == true) {
             chapters = app.repo.cachedChapters(bookUrl)
@@ -260,7 +270,7 @@ fun DetailScreen(
                             ) {
                                 Text(if (currentSwap != null) "已换源 · 点击更换" else "换源阅读")
                             }
-                            // 起点 / 番茄：本机直连抓一次（WebView 过反爬，目录+正文进本地缓存）
+                            // 起点 / 番茄：本机直连抓（WebView 过反爬，目录+正文进本地缓存）
                             if (app.sources.isDeviceCrawlable(sourceId)) {
                                 OutlinedButton(
                                     onClick = {
@@ -270,8 +280,34 @@ fun DetailScreen(
                                     modifier = Modifier.weight(1f),
                                     enabled = !deviceBusy
                                 ) {
-                                    Text(if (deviceBusy) "抓取中…" else "本机抓取")
+                                    Text(if (deviceBusy) "抓取中…" else "抓 30 章")
                                 }
+                            }
+                        }
+                        if (app.sources.isDeviceCrawlable(sourceId)) {
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val b = book ?: return@OutlinedButton
+                                    if (deviceBusy) {
+                                        app.repo.cancelCrawl()
+                                    } else {
+                                        app.repo.startCrawl(
+                                            sourceId, bookUrl, b.title,
+                                            limit = app.repo.ALL_CHAPTERS
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    when {
+                                        deviceBusy -> "暂停下载"
+                                        downloadDone > 0 && downloadTotal > 0 ->
+                                            "继续下载（$downloadDone/$downloadTotal）"
+                                        else -> "下载整本（断点续抓）"
+                                    }
+                                )
                             }
                         }
                         if (deviceState.isNotBlank()) {

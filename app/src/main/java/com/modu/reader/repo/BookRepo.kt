@@ -39,6 +39,9 @@ class BookRepo(private val app: App) {
     /** 生命周期跟 App 一致，用于「界面已经关掉也要落盘」的写操作与长任务 */
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** startCrawl 的 limit 传这个值 = 整本下载 */
+    val ALL_CHAPTERS = Int.MAX_VALUE
+
     /** 有付费墙的两个源：正文是试读/空的时候才去采集站兜底 */
     private val PAID_WALL_SOURCES = setOf("qidian", "fanqie")
 
@@ -46,6 +49,9 @@ class BookRepo(private val app: App) {
     private val chapterFallbackCache = ConcurrentHashMap<String, String>()
 
     private val _crawlState = MutableStateFlow<CrawlState?>(null)
+
+    /** 当前的抓取任务（「暂停下载」用） */
+    private var crawlJob: kotlinx.coroutines.Job? = null
 
     /** 本机抓取的进度/结果，界面用 collectAsState 订阅 */
     val crawlState: StateFlow<CrawlState?> = _crawlState
@@ -200,26 +206,78 @@ class BookRepo(private val app: App) {
      * 任务挂在 App 级作用域上：用户翻到阅读器或返回上一页，抓取会继续跑完，
      * 进度通过 [crawlState] 订阅。同一时间只允许一个任务。
      */
+    /**
+     * 手机端抓取。
+     *
+     * @param limit 本次最多抓几章；**传 [ALL_CHAPTERS] 表示整本下载**（分批跑，可断点续抓）
+     */
     fun startCrawl(sourceId: String, bookUrl: String, title: String, limit: Int = 30) {
         if (_crawlState.value?.running == true) return
         _crawlState.value = CrawlState(bookUrl, true, "准备中…")
-        io.launch {
+        crawlJob = io.launch {
             try {
-                val result = DeviceCrawl().crawl(
-                    context = app,
-                    sourceId = sourceId,
-                    bookUrl = bookUrl,
-                    limit = limit,
-                    onCatalog = { chapters -> app.db.saveChapters(bookUrl, chapters) },
-                    onProgress = { msg -> _crawlState.value = CrawlState(bookUrl, true, msg) }
-                )
-                // 目录已经在 onCatalog 里落库（中断也留得下），正文成功后统一写缓存
-                result.contents.forEach { (idx, text) ->
-                    app.db.saveContent(contentKey(bookUrl, idx), text)
+                val whole = limit >= ALL_CHAPTERS
+                val batch = 20
+                var offset = 0
+                var total = 0
+                var done = 0
+
+                while (true) {
+                    val result = DeviceCrawl().crawl(
+                        context = app,
+                        sourceId = sourceId,
+                        bookUrl = bookUrl,
+                        limit = if (whole) batch else limit,
+                        startIndex = offset,
+                        onCatalog = { chapters ->
+                            total = chapters.size
+                            app.db.saveChapters(bookUrl, chapters)
+                            if (whole) {
+                                // 已缓存的章直接算「完成」，续抓时跳过
+                                done = chapters.count {
+                                    !app.db.loadContent(contentKey(bookUrl, it.index)).isNullOrBlank()
+                                }
+                                app.db.saveDownloadTask(
+                                    bookUrl, title, sourceId, total, done, 0, false
+                                )
+                            }
+                        },
+                        onProgress = { msg ->
+                            val prefix = if (whole) "整本下载 $done/$total · " else ""
+                            _crawlState.value = CrawlState(bookUrl, true, prefix + msg)
+                        }
+                    )
+
+                    result.contents.forEach { (idx, text) ->
+                        app.db.saveContent(contentKey(bookUrl, idx), text)
+                    }
+                    offset += if (whole) batch else limit
+                    val outcome = result.outcome
+
+                    if (!whole) {
+                        _crawlState.value =
+                            CrawlState(bookUrl, false, outcome.log, finished = true)
+                        return@launch
+                    }
+
+                    done = total.coerceAtMost(offset)
+                    val finished = total == 0 || offset >= total ||
+                        (outcome.fetched == 0 && outcome.failed == 0 && outcome.paid == 0)
+                    app.db.saveDownloadTask(
+                        bookUrl, title, sourceId, total, done,
+                        outcome.failed, finished
+                    )
+                    _crawlState.value = CrawlState(
+                        bookUrl, !finished,
+                        "整本下载 $done/$total（本批 ${result.contents.size} 章）" +
+                            (if (finished) " · 完成" else ""),
+                        finished = finished
+                    )
+                    if (finished) return@launch
+                    if (outcome.chapters == 0) return@launch   // 目录没拿到，别死循环
                 }
-                _crawlState.value = CrawlState(bookUrl, false, result.outcome.log, finished = true)
             } catch (ce: CancellationException) {
-                _crawlState.value = CrawlState(bookUrl, false, "抓取已取消", finished = true)
+                _crawlState.value = CrawlState(bookUrl, false, "抓取已暂停", finished = true)
                 throw ce
             } catch (e: Exception) {
                 _crawlState.value = CrawlState(
@@ -228,6 +286,21 @@ class BookRepo(private val app: App) {
                 )
             }
         }
+    }
+
+    /** 暂停/取消当前抓取（进度已落库，下次点继续） */
+    fun cancelCrawl() {
+        crawlJob?.cancel()
+        crawlJob = null
+        val st = _crawlState.value
+        if (st != null) {
+            _crawlState.value = st.copy(running = false, message = "已暂停（进度已保存）", finished = true)
+        }
+    }
+
+    /** 这本书的整本下载进度（done/total）；没下过返回 null */
+    suspend fun downloadProgress(bookUrl: String): Pair<Int, Int>? = withContext(Dispatchers.IO) {
+        app.db.downloadTask(bookUrl)?.let { it[1] to it[0] }
     }
 
     /** 抓完后直接从本地库读目录（不重新联网，避免把成功反显成失败） */

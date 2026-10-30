@@ -42,14 +42,15 @@ class DeviceCrawl {
         sourceId: String,
         bookUrl: String,
         limit: Int = 30,
+        startIndex: Int = 0,
         onCatalog: (List<Chapter>) -> Unit = {},
         onProgress: (String) -> Unit = {}
     ): Result = withContext(Dispatchers.IO) {
         try {
             when {
                 bookUrl.contains("fanqienovel.com") ->
-                    crawlFanqie(context, bookUrl, limit, onCatalog, onProgress)
-                else -> crawlQidian(context, bookUrl, limit, onCatalog, onProgress)
+                    crawlFanqie(context, bookUrl, limit, startIndex, onCatalog, onProgress)
+                else -> crawlQidian(context, bookUrl, limit, startIndex, onCatalog, onProgress)
             }
         } catch (e: CancellationException) {
             throw e
@@ -62,6 +63,7 @@ class DeviceCrawl {
         context: Context,
         bookUrl: String,
         limit: Int,
+        startIndex: Int,
         onCatalog: (List<Chapter>) -> Unit,
         onProgress: (String) -> Unit
     ): Result {
@@ -77,12 +79,13 @@ class DeviceCrawl {
             return Result(outcome = Outcome(log = "起点目录为空（可能被风控，过几分钟再试）"))
         }
         onCatalog(chapters)
-        onProgress("目录 ${chapters.size} 章，开始抓正文（本次 $limit 章）…")
+        val slice = chapters.drop(startIndex).take(limit)
+        onProgress("目录 ${chapters.size} 章，从第 ${startIndex + 1} 章开始抓 ${slice.size} 章…")
 
         val contents = ArrayList<Pair<Int, String>>()
         var paid = 0
         var failed = 0
-        for ((i, ch) in chapters.take(limit).withIndex()) {
+        for ((i, ch) in slice.withIndex()) {
             coroutineContext.ensureActive()
             val pair = try {
                 DeviceApi.qidianText(context, ch.url, bookUrl)
@@ -101,14 +104,14 @@ class DeviceCrawl {
                 continue
             }
             contents.add(ch.index to text)
-            onProgress("已抓 ${contents.size}/$limit 章（第 ${i + 1} 章）…")
+            onProgress("已抓 ${contents.size}/${slice.size} 章（第 ${startIndex + i + 1} 章）…")
         }
         return Result(
             chapters = chapters,
             contents = contents,
             outcome = Outcome(
                 chapters = chapters.size, fetched = contents.size, paid = paid, failed = failed,
-                log = "起点：目录 ${chapters.size} 章 · 全文 ${contents.size} 章 · " +
+                log = "起点：目录 ${chapters.size} 章 · 本批全文 ${contents.size} 章 · " +
                     "VIP/试读 $paid 章 · 失败 $failed"
             )
         )
@@ -118,6 +121,7 @@ class DeviceCrawl {
         context: Context,
         bookUrl: String,
         limit: Int,
+        startIndex: Int,
         onCatalog: (List<Chapter>) -> Unit,
         onProgress: (String) -> Unit
     ): Result {
@@ -134,13 +138,14 @@ class DeviceCrawl {
             return Result(outcome = Outcome(log = "番茄目录为空（风控中，歇几分钟再试）"))
         }
         onCatalog(chapters)
-        onProgress("目录 ${chapters.size} 章，开始抓正文（本次 $limit 章）…")
+        val slice = chapters.drop(startIndex).take(limit)
+        onProgress("目录 ${chapters.size} 章，从第 ${startIndex + 1} 章开始抓 ${slice.size} 章…")
 
         val contents = ArrayList<Pair<Int, String>>()
         var paid = 0
         var undecoded = 0
         var failed = 0
-        for ((i, ch) in chapters.take(limit).withIndex()) {
+        for ((i, ch) in slice.withIndex()) {
             coroutineContext.ensureActive()
             val text = try {
                 DeviceApi.fanqieText(context, ch.url, bookUrl)
@@ -154,7 +159,7 @@ class DeviceCrawl {
                 FanqieGlyph.obfuscatedRatio(text) > 0.02f -> undecoded++
                 else -> {
                     contents.add(ch.index to text)
-                    onProgress("已抓 ${contents.size}/$limit 章（第 ${i + 1} 章）…")
+                    onProgress("已抓 ${contents.size}/${slice.size} 章（第 ${startIndex + i + 1} 章）…")
                 }
             }
         }

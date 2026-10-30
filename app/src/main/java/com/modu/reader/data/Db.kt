@@ -47,6 +47,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, DB_VERSI
         createChaptersTable(db)
         createContentTable(db)
         createSwapTable(db)
+        createDownloadTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -60,6 +61,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, DB_VERSI
         createChaptersTable(db)
         createContentTable(db)
         createSwapTable(db)
+        createDownloadTable(db)
     }
 
     override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -67,6 +69,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, DB_VERSI
         createChaptersTable(db)
         createContentTable(db)
         createSwapTable(db)
+        createDownloadTable(db)
     }
 
     private fun createChaptersTable(db: SQLiteDatabase) {
@@ -86,6 +89,21 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, DB_VERSI
                 ckey TEXT PRIMARY KEY,
                 body TEXT NOT NULL DEFAULT '',
                 ts INTEGER NOT NULL DEFAULT 0)"""
+        )
+    }
+
+    /** 整本下载进度：断点续抓、以及「这本下到第几章了」 */
+    private fun createDownloadTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS download_task(
+                book_url TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '',
+                source_id TEXT NOT NULL DEFAULT '',
+                total INTEGER NOT NULL DEFAULT 0,
+                done INTEGER NOT NULL DEFAULT 0,
+                failed INTEGER NOT NULL DEFAULT 0,
+                finished INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0)"""
         )
     }
 
@@ -253,6 +271,72 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, DB_VERSI
         writableDatabase.delete("chapters", null, null)
     }
 
+    // ---------------- 整本下载 ----------------
+
+    /** 记录/更新一本的下载进度（断点续抓靠它） */
+    fun saveDownloadTask(
+        bookUrl: String,
+        title: String,
+        sourceId: String,
+        total: Int,
+        done: Int,
+        failed: Int,
+        finished: Boolean
+    ) {
+        val cv = ContentValues().apply {
+            put("book_url", bookUrl)
+            put("title", title)
+            put("source_id", sourceId)
+            put("total", total)
+            put("done", done)
+            put("failed", failed)
+            put("finished", if (finished) 1 else 0)
+            put("updated_at", System.currentTimeMillis())
+        }
+        try {
+            writableDatabase.insertWithOnConflict(
+                "download_task", null, cv, SQLiteDatabase.CONFLICT_REPLACE
+            )
+        } catch (e: android.database.sqlite.SQLiteException) {
+            createDownloadTable(writableDatabase)
+            writableDatabase.insertWithOnConflict(
+                "download_task", null, cv, SQLiteDatabase.CONFLICT_REPLACE
+            )
+        }
+    }
+
+    /** 这本书的下载进度：(total, done, failed, finished)；没记录返回 null */
+    fun downloadTask(bookUrl: String): IntArray? {
+        return try {
+            readableDatabase.rawQuery(
+                "SELECT total, done, failed, finished FROM download_task WHERE book_url=?",
+                arrayOf(bookUrl)
+            ).use { c ->
+                if (!c.moveToFirst()) null
+                else intArrayOf(c.getInt(0), c.getInt(1), c.getInt(2), c.getInt(3))
+            }
+        } catch (e: android.database.sqlite.SQLiteException) {
+            null
+        }
+    }
+
+    /** 所有下载过的书（按最近更新排） */
+    fun downloadTasks(): List<Triple<String, Int, Int>> {
+        val out = ArrayList<Triple<String, Int, Int>>()
+        try {
+            readableDatabase.rawQuery(
+                "SELECT book_url, done, total FROM download_task ORDER BY updated_at DESC", null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    out.add(Triple(c.getString(0), c.getInt(1), c.getInt(2)))
+                }
+            }
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // 表不存在就当没有
+        }
+        return out
+    }
+
     // ---------------- 换源 ----------------
 
     fun saveSwap(s: BookSwap) {
@@ -330,6 +414,6 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, DB_VERSI
 
     companion object {
         /** 加表/改表必须 +1，否则老用户的库不会升级 */
-        const val DB_VERSION = 2
+        const val DB_VERSION = 3
     }
 }
