@@ -2,7 +2,6 @@ package com.modu.reader.source
 
 import android.content.Context
 import com.modu.reader.data.Chapter
-import com.modu.reader.data.Db
 import com.modu.reader.net.Http
 import com.modu.reader.net.WebGate
 import kotlinx.coroutines.CancellationException
@@ -14,7 +13,7 @@ import org.jsoup.Jsoup
 import kotlin.coroutines.coroutineContext
 
 /**
- * 手机端直连抓取：不依赖 PC，直接在 App 里抓起点 / 番茄的书目、目录、正文。
+ * 手机端直连抓取：不依赖 PC，直接在 App 里抓起点 / 番茄的目录与正文。
  *
  * 和 PC 版（tools/spider）的分工：
  *
@@ -26,10 +25,10 @@ import kotlin.coroutines.coroutineContext
  * | 全站枚举（13 万册） | 适合 | 不适合（耗电、易被风控），只按书抓 |
  * | VIP / 付费章 | 拿不到 | 拿不到（服务端不下发，见 docs/付费墙与换源.md） |
  *
- * 所以：想在手机上读，就用「本机抓取」抓你正在看的那几本；想铺全站，还是 PC 跑完
- * 用「本地爬虫库」连过去。
+ * **本类只抓、不落库**：结果通过 [Result] 交回 `BookRepo`，由它决定怎么存。
+ * 这样抓取逻辑可以脱离 `Db` 测，也避免 source 层直接改数据库。
  */
-class DeviceCrawl(private val db: Db) {
+class DeviceCrawl {
 
     data class Outcome(
         val chapters: Int = 0,
@@ -38,6 +37,13 @@ class DeviceCrawl(private val db: Db) {
         val undecoded: Int = 0,
         val failed: Int = 0,
         val log: String = ""
+    )
+
+    /** 抓取结果：目录 + 正文（idx -> 文本），落库由调用方负责 */
+    data class Result(
+        val chapters: List<Chapter> = emptyList(),
+        val contents: List<Pair<Int, String>> = emptyList(),
+        val outcome: Outcome = Outcome()
     )
 
     private val desktopUa =
@@ -50,19 +56,20 @@ class DeviceCrawl(private val db: Db) {
         sourceId: String,
         bookUrl: String,
         limit: Int = 30,
+        onCatalog: (List<Chapter>) -> Unit = {},
         onProgress: (String) -> Unit = {}
-    ): Outcome = withContext(Dispatchers.IO) {
+    ): Result = withContext(Dispatchers.IO) {
         try {
             when (sourceId) {
-                "qidian" -> crawlQidian(context, bookUrl, limit, onProgress)
-                FanqieSource.ID -> crawlFanqie(context, bookUrl, limit, onProgress)
-                else -> Outcome(log = "这个书源不支持本机抓取（只支持起点 / 番茄）")
+                "qidian" -> crawlQidian(context, bookUrl, limit, onCatalog, onProgress)
+                FanqieSource.ID -> crawlFanqie(context, bookUrl, limit, onCatalog, onProgress)
+                else -> Result(outcome = Outcome(log = "这个书源不支持本机抓取（只支持起点 / 番茄）"))
             }
         } catch (e: CancellationException) {
             // 用户离开界面：必须原样抛出，否则协程「假完成」、后台继续跑几十秒
             throw e
         } catch (e: Exception) {
-            Outcome(log = "抓取出错：${e.message ?: e.javaClass.simpleName}")
+            Result(outcome = Outcome(log = "抓取出错：${e.message ?: e.javaClass.simpleName}"))
         }
     }
 
@@ -71,10 +78,11 @@ class DeviceCrawl(private val db: Db) {
         context: Context,
         bookUrl: String,
         limit: Int,
+        onCatalog: (List<Chapter>) -> Unit,
         onProgress: (String) -> Unit
-    ): Outcome {
+    ): Result {
         val bid = Regex("/book/(\\d+)").find(bookUrl)?.groupValues?.get(1)
-            ?: return Outcome(log = "不是起点书籍地址：$bookUrl")
+            ?: return Result(outcome = Outcome(log = "不是起点书籍地址：$bookUrl"))
 
         onProgress("过起点反爬（WebView 跑 probe.js）…")
         var cookie = WebGate.cookieFor(context, "https://www.qidian.com/all/")
@@ -86,15 +94,15 @@ class DeviceCrawl(private val db: Db) {
             html = http("https://www.qidian.com/book/$bid/", cookie, qidianReferer)
         }
         if (!html.contains("catalog-volume")) {
-            return Outcome(log = "起点书籍页没取到目录（可能被风控，过几分钟再试）")
+            return Result(outcome = Outcome(log = "起点书籍页没取到目录（可能被风控，过几分钟再试）"))
         }
 
         val chapters = DeviceParsers.parseQidianCatalog(html)
-        if (chapters.isEmpty()) return Outcome(log = "目录解析为空")
-        db.saveChapters(bookUrl, chapters)
+        if (chapters.isEmpty()) return Result(outcome = Outcome(log = "目录解析为空"))
+        onCatalog(chapters)
         onProgress("目录 ${chapters.size} 章，开始抓正文（本次 $limit 章）…")
 
-        var fetched = 0
+        val contents = ArrayList<Pair<Int, String>>()
         var paid = 0
         var failed = 0
         var reAuth = false
@@ -122,13 +130,17 @@ class DeviceCrawl(private val db: Db) {
                 paid++   // VIP 章只给约 130 字试读
                 continue
             }
-            db.saveContent("$bookUrl#${ch.index}", text)
-            fetched++
-            onProgress("已抓 $fetched/${limit} 章（第 ${i + 1} 章）…")
+            contents.add(ch.index to text)
+            onProgress("已抓 ${contents.size}/$limit 章（第 ${i + 1} 章）…")
         }
-        return Outcome(
-            chapters = chapters.size, fetched = fetched, paid = paid, failed = failed,
-            log = "起点：目录 ${chapters.size} 章 · 全文 $fetched 章 · VIP/试读 $paid 章 · 失败 $failed"
+        return Result(
+            chapters = chapters,
+            contents = contents,
+            outcome = Outcome(
+                chapters = chapters.size, fetched = contents.size, paid = paid, failed = failed,
+                log = "起点：目录 ${chapters.size} 章 · 全文 ${contents.size} 章 · " +
+                    "VIP/试读 $paid 章 · 失败 $failed"
+            )
         )
     }
 
@@ -137,12 +149,13 @@ class DeviceCrawl(private val db: Db) {
         context: Context,
         bookUrl: String,
         limit: Int,
+        onCatalog: (List<Chapter>) -> Unit,
         onProgress: (String) -> Unit
-    ): Outcome {
+    ): Result {
         FanqieGlyph.ensureLoaded(context)
         val bookId = Regex("/(?:page|book)/(\\d+)").find(bookUrl)?.groupValues?.get(1)
             ?: bookUrl.filter { it.isDigit() }.takeIf { it.length > 5 }
-            ?: return Outcome(log = "不是番茄书籍地址：$bookUrl")
+            ?: return Result(outcome = Outcome(log = "不是番茄书籍地址：$bookUrl"))
 
         onProgress("取番茄目录…")
         var cookie = WebGate.cookieFor(context, "https://fanqienovel.com/")
@@ -155,14 +168,14 @@ class DeviceCrawl(private val db: Db) {
             state = DeviceParsers.jsonAfter(html, "window.__INITIAL_STATE__=")
         }
         val page = state?.optJSONObject("page")
-            ?: return Outcome(log = "番茄目录页没取到（风控中，歇几分钟再试）")
+            ?: return Result(outcome = Outcome(log = "番茄目录页没取到（风控中，歇几分钟再试）"))
 
         val chapters = DeviceParsers.parseFanqieCatalog(page)
-        if (chapters.isEmpty()) return Outcome(log = "番茄目录为空")
-        db.saveChapters(bookUrl, chapters)
+        if (chapters.isEmpty()) return Result(outcome = Outcome(log = "番茄目录为空"))
+        onCatalog(chapters)
         onProgress("目录 ${chapters.size} 章，开始抓正文（本次 $limit 章）…")
 
-        var fetched = 0
+        val contents = ArrayList<Pair<Int, String>>()
         var paid = 0
         var undecoded = 0
         var failed = 0
@@ -170,12 +183,14 @@ class DeviceCrawl(private val db: Db) {
         for ((i, ch) in chapters.take(limit).withIndex()) {
             coroutineContext.ensureActive()
             var pageHtml = http(ch.url, cookie, "https://fanqienovel.com/page/$bookId")
-            var reader = DeviceParsers.jsonAfter(pageHtml, "window.__INITIAL_STATE__=")?.optJSONObject("reader")
+            var reader = DeviceParsers.jsonAfter(pageHtml, "window.__INITIAL_STATE__=")
+                ?.optJSONObject("reader")
             if (reader == null && !reAuth) {
                 reAuth = true
                 cookie = WebGate.cookieFor(context, ch.url, force = true)
                 pageHtml = http(ch.url, cookie, "https://fanqienovel.com/page/$bookId")
-                reader = DeviceParsers.jsonAfter(pageHtml, "window.__INITIAL_STATE__=")?.optJSONObject("reader")
+                reader = DeviceParsers.jsonAfter(pageHtml, "window.__INITIAL_STATE__=")
+                    ?.optJSONObject("reader")
             }
             val data = reader?.optJSONObject("chapterData")
                 ?: reader?.optJSONObject("preview")?.optJSONObject("chapterData")
@@ -188,25 +203,27 @@ class DeviceCrawl(private val db: Db) {
                 paid++
                 continue
             }
-            val fontId = Regex(
-                "@font-face\\s*\\{[^}]*?url\\(\\s*[\"']?https://[^)\"']*?/([^/)\"']+)\\.woff2"
-            ).find(pageHtml)?.groupValues?.get(1)
+            val fontId = DeviceParsers.fontIdOf(pageHtml)
             val text = DeviceParsers.htmlToText(raw).let { FanqieGlyph.decode(it, fontId) }
             if (FanqieGlyph.obfuscatedRatio(text) > 0.02f) {
                 // 字形表没覆盖（站点换了字体）：不猜、不静默当成功
                 undecoded++
                 continue
             }
-            db.saveContent("$bookUrl#${ch.index}", text)
-            fetched++
-            onProgress("已抓 $fetched/${limit} 章（第 ${i + 1} 章）…")
+            contents.add(ch.index to text)
+            onProgress("已抓 ${contents.size}/$limit 章（第 ${i + 1} 章）…")
         }
-        return Outcome(
-            chapters = chapters.size, fetched = fetched, paid = paid,
-            undecoded = undecoded, failed = failed,
-            log = "番茄：目录 ${chapters.size} 章 · 全文 $fetched 章 · 付费/锁定 $paid 章" +
-                (if (undecoded > 0) " · 字形未还原 $undecoded 章" else "") +
-                (if (failed > 0) " · 失败 $failed 章" else "")
+        return Result(
+            chapters = chapters,
+            contents = contents,
+            outcome = Outcome(
+                chapters = chapters.size, fetched = contents.size, paid = paid,
+                undecoded = undecoded, failed = failed,
+                log = "番茄：目录 ${chapters.size} 章 · 全文 ${contents.size} 章 · " +
+                    "付费/锁定 $paid 章" +
+                    (if (undecoded > 0) " · 字形未还原 $undecoded 章" else "") +
+                    (if (failed > 0) " · 失败 $failed 章" else "")
+            )
         )
     }
 
@@ -272,6 +289,11 @@ internal object DeviceParsers {
         Jsoup.parse(raw).select("p").joinToString("\n") { it.text().trim() }
             .lines().filter { it.isNotBlank() }.joinToString("\n")
             .ifBlank { Jsoup.parse(raw).text() }
+
+    /** 页面里 `@font-face` 的字体文件名（去掉 .woff2）；认不出返回 null，走字形表 default */
+    fun fontIdOf(html: String): String? =
+        Regex("@font-face\\s*\\{[^}]*?url\\(\\s*[\"']?https://[^)\"']*?/([^/)\"']+)\\.woff2")
+            .find(html)?.groupValues?.get(1)
 
     /** 从 HTML 里抠出 `marker` 后面的 JSON 对象（花括号配对，字符串里的括号不算） */
     fun jsonAfter(html: String, marker: String): JSONObject? {

@@ -153,47 +153,40 @@ class BookRepo(private val app: App) {
         chapterFallbackCache[cacheKey]?.let { return it }
 
         val swapSourceId = app.db.loadSwap(bookUrl)?.sourceId
-        val pool = app.sources.available()
+        val sites = app.sources.available()
             .filter {
                 it.id != excludeSourceId && it.id != swapSourceId &&
                     !app.sources.isDiscovery(it.id)
             }
-            .mapNotNull { app.sources.source(it.id) }
+            .mapNotNull { cfg ->
+                app.sources.source(cfg.id)?.let { s ->
+                    CollectorFallback.Site(
+                        name = cfg.name,
+                        search = { key -> s.search(key, 1) },
+                        chapters = { book -> s.chapters(book) },
+                        content = { book, ch -> s.content(book, ch) }
+                    )
+                }
+            }
 
-        // 起点这边一共多少章：用来把「第 N 章」折算成采集站目录里的预期位置
+        // 起点这边一共多少章：把「第 N 章」折算成相对位置，再由每个采集站按自己的目录长度换算
         val localTotal = try {
             app.db.loadChapters(bookUrl).size
         } catch (e: Exception) {
             0
         }
-
-        var found: String? = null
-        outer@ for (s in pool.take(3)) {
-            try {
-                val hits = s.search(bookTitle, 1).filter { Paywall.sameBook(it.title, bookTitle) }
-                    .take(2)
-                for (h in hits) {
-                    val list = s.chapters(h)
-                    if (list.isEmpty()) continue
-                    val hint = if (localTotal > 0) {
-                        (chapter.index.toLong() * list.size / localTotal).toInt()
-                    } else {
-                        -1
-                    }
-                    val idx = Paywall.findChapter(list.map { it.title }, chapterTitle, hint)
-                    if (idx < 0) continue
-                    val body = s.content(h, list[idx])
-                    if (body.isNotBlank() && body.length > Paywall.SUSPICIOUS_CHARS) {
-                        found = body
-                        break@outer
-                    }
-                }
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (e: Exception) {
-                // 这个采集站挂了就换下一个
-            }
+        val ratio = if (localTotal > 0) {
+            (chapter.index + 0.5f) / localTotal
+        } else {
+            -1f
         }
+
+        val found = CollectorFallback.resolve(
+            bookTitle = bookTitle,
+            chapterTitle = chapterTitle,
+            positionRatio = ratio,
+            sites = sites
+        )
         if (found != null) {
             if (chapterFallbackCache.size > 200) chapterFallbackCache.clear()
             chapterFallbackCache[cacheKey] = found
@@ -212,10 +205,19 @@ class BookRepo(private val app: App) {
         _crawlState.value = CrawlState(bookUrl, true, "准备中…")
         io.launch {
             try {
-                val out = DeviceCrawl(app.db).crawl(app, sourceId, bookUrl, limit) { msg ->
-                    _crawlState.value = CrawlState(bookUrl, true, msg)
+                val result = DeviceCrawl().crawl(
+                    context = app,
+                    sourceId = sourceId,
+                    bookUrl = bookUrl,
+                    limit = limit,
+                    onCatalog = { chapters -> app.db.saveChapters(bookUrl, chapters) },
+                    onProgress = { msg -> _crawlState.value = CrawlState(bookUrl, true, msg) }
+                )
+                // 目录已经在 onCatalog 里落库（中断也留得下），正文成功后统一写缓存
+                result.contents.forEach { (idx, text) ->
+                    app.db.saveContent(contentKey(bookUrl, idx), text)
                 }
-                _crawlState.value = CrawlState(bookUrl, false, out.log, finished = true)
+                _crawlState.value = CrawlState(bookUrl, false, result.outcome.log, finished = true)
             } catch (ce: CancellationException) {
                 _crawlState.value = CrawlState(bookUrl, false, "抓取已取消", finished = true)
                 throw ce
@@ -340,4 +342,8 @@ class BookRepo(private val app: App) {
 
     fun contentCached(bookUrl: String, index: Int): Boolean =
         !app.db.loadContent(contentKey(bookUrl, index)).isNullOrBlank()
+
+    /** 供预取/阅读器判断缓存时用（IO 线程读盘，别在 UI 线程直接调） */
+    suspend fun contentCachedAsync(bookUrl: String, index: Int): Boolean =
+        withContext(Dispatchers.IO) { contentCached(bookUrl, index) }
 }

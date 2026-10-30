@@ -30,9 +30,12 @@ object WebGate {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-    /** 进程内缓存：同一地址只过一次（有上限，别当永久字典） */
-    private val cache = HashMap<String, String>()
+    /** 进程内缓存：同一地址只过一次（有上限 + 有 TTL，别当永久字典） */
+    private class Entry(val cookie: String, val at: Long)
+
+    private val cache = HashMap<String, Entry>()
     private const val CACHE_MAX = 16
+    private const val CACHE_TTL_MS = 10 * 60 * 1000L
 
     /**
      * 跑一遍 [url]，返回该地址的 Cookie 头。
@@ -45,7 +48,10 @@ object WebGate {
         waitMs: Long = 6000L,
         force: Boolean = false
     ): String = withContext(Dispatchers.Main) {
-        if (!force) cache[url]?.let { return@withContext it }
+        if (!force) {
+            cache[url]?.takeIf { System.currentTimeMillis() - it.at < CACHE_TTL_MS }
+                ?.let { return@withContext it.cookie }
+        }
 
         CookieManager.getInstance().setAcceptCookie(true)
         val view = try {
@@ -81,7 +87,7 @@ object WebGate {
             val cookie = CookieManager.getInstance().getCookie(url).orEmpty()
             if (cookie.isNotBlank()) {
                 if (cache.size >= CACHE_MAX) cache.clear()
-                cache[url] = cookie
+                cache[url] = Entry(cookie, System.currentTimeMillis())
             }
             cookie
         } finally {

@@ -69,13 +69,24 @@ object Paywall {
         return x == y || x.contains(y) || y.contains(x)
     }
 
-    /** 书名是否同一本（《》与空白先去掉，允许一方包含另一方） */
+    /** 采集站常见的书名噪声：括注、「全本」「校对版」这类后缀 */
+    private val BOOK_NOISE = Regex(
+        "[（(][^）)]{0,12}[）)]|全本|完结|校对版|精校版?|无删减|TXT|txt|最新章节"
+    )
+
+    /**
+     * 书名是否同一本。
+     *
+     * 只认「去掉括注/常见后缀后完全相等」——不能用包含匹配：
+     * 搜《全球高武》会搜出《全球高武之死气面板》这种同人作，包含匹配会把同人正文当成原著。
+     */
     fun sameBook(a: String, b: String): Boolean {
-        fun clean(s: String) = s.replace(Regex("[《》\\s\\u3000]"), "").lowercase()
+        fun clean(s: String) = BOOK_NOISE.replace(s, "")
+            .replace(Regex("[《》\\s\\u3000·:：]"), "").lowercase()
         val x = clean(a)
         val y = clean(b)
         if (x.isEmpty() || y.isEmpty()) return false
-        return x == y || x.contains(y) || y.contains(x)
+        return x == y
     }
 
     /**
