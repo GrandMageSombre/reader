@@ -111,6 +111,8 @@ class SourceManager(context: Context) {
         val cfg = byId(id) ?: return null
         return when {
             cfg.id == DemoSource.ID -> DemoSource(cfg)
+            // 手机直抓：App 内的起点书库 + 番茄榜单，不需要 PC 接口
+            cfg.id == DeviceSource.ID -> DeviceSource(cfg)
             // 本地爬虫库：数据来自 PC 上 tools/spider 抓好的库，走 JSON 接口
             cfg.id == LocalLibrarySource.ID -> LocalLibrarySource(cfg)
             // 番茄走 JSON 接口（HTML 列表拿不到），且标为发现源

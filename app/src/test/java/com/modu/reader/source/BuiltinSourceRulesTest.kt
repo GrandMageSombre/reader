@@ -193,15 +193,23 @@ class BuiltinSourceRulesTest {
     }
 
     @Test
-    fun `书城入口是起点、番茄与本地爬虫库`() {
+    fun `书城入口是起点、番茄与手机直抓`() {
         val ids = BuiltinSources.STOREFRONT_IDS
         assertEquals("书城入口应有 3 个", 3, ids.size)
         assertTrue("必须包含起点", ids.contains("qidian"))
         assertTrue("必须包含番茄", ids.contains(FanqieSource.ID))
-        // 自己爬下来的库也要能当入口：数据是本地接口，不依赖第三方站点
-        assertTrue("必须包含本地爬虫库", ids.contains(LocalLibrarySource.ID))
-        // 采集站不应出现在书城入口里（它们通过换源提供正文）
+        // 手机直抓：完全在 App 内跑，用户不需要配 PC 接口
+        assertTrue("必须包含手机直抓", ids.contains(DeviceSource.ID))
+        // 「本地爬虫库」要 PC 上跑 serve，不该占书城入口，只在书源管理里可选
+        assertTrue("本地爬虫库不应作为书城入口", !ids.contains(LocalLibrarySource.ID))
         assertTrue("采集站不应作为书城入口", !ids.contains("wangshu") && !ids.contains("xbiquwk"))
+    }
+
+    @Test
+    fun `手机直抓书源支持直连能力标记`() {
+        val src = DeviceSource(BuiltinSources.device())
+        assertEquals("device", src.cfg.id)
+        assertTrue("手机直抓要能被「本机抓取」识别", src is DeviceCrawlable)
     }
 
     @Test
@@ -328,6 +336,11 @@ class BuiltinSourceRulesTest {
             // 番茄走 JSON 接口，不依赖 HTML 规则；它靠 categories 取书
             if (cfg.id == FanqieSource.ID) {
                 assertTrue("番茄必须有分类（走 api）", cfg.categories.isNotEmpty())
+                return@forEach
+            }
+            // 手机直抓走 DeviceApi（WebView 取票 + JSON/HTML 自解析），也不用 CSS 规则
+            if (cfg.id == DeviceSource.ID) {
+                assertTrue("手机直抓必须有 baseUrl", cfg.baseUrl.startsWith("http"))
                 return@forEach
             }
             // 本地爬虫库走自己的 JSON 接口（LocalLibrarySource），不用 CSS 规则

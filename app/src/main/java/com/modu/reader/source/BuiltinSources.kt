@@ -37,7 +37,7 @@ object BuiltinSources {
      * 其余一律默认关闭，让用户自己选——第三方聚合站的可用性与版权状态差异很大。
      */
     val DEFAULT_ON: Set<String> =
-        setOf("demo", "xbiquwk", "wangshu", "gutenberg", LocalLibrarySource.ID)
+        setOf("demo", "xbiquwk", "wangshu", "gutenberg", DeviceSource.ID)
 
     private const val UA =
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
@@ -372,6 +372,24 @@ object BuiltinSources {
     fun demo() = DemoSource.config()
 
     /**
+     * 手机直抓：完全在 App 内抓起点书库 + 番茄榜单，**不需要 PC、不需要配接口**。
+     *
+     * 靠 `WebGate` 的隐藏 WebView 过掉 probe.js / 验证码页，之后所有请求走普通 HTTP。
+     * 想铺全站（十几万册）仍然建议用 PC 的 `tools/spider`，那个走「本地爬虫库」。
+     */
+    fun device() = SourceConfig(
+        id = DeviceSource.ID,
+        name = "手机直抓",
+        baseUrl = "https://www.qidian.com",
+        builtinGroup = GROUP,
+        note = "本机直连：起点 15 个分类书库 + 番茄榜单，目录与正文都在手机上抓，" +
+            "VIP 章只有站方试读（可换源）。首次抓取会自动用内置浏览器过一次反爬，无需配置。",
+        headers = emptyMap(),
+        categories = emptyList(),
+        rules = SourceRules()
+    )
+
+    /**
      * 本地爬虫库：读 PC 上 `tools/spider` 抓下来的数据。
      *
      * 规则引擎在这里用不上（对面是 JSON 接口，不是 HTML），
@@ -394,6 +412,7 @@ object BuiltinSources {
     /** 全部内置源，顺序即书城里的展示顺序 */
     fun all(): List<SourceConfig> = listOf(
         demo(),
+        device(),
         localLibrary(),
         xbiquwkMain(),
         xbiquwkMirror(),
@@ -409,11 +428,10 @@ object BuiltinSources {
     val IDS: Set<String> = all().map { it.id }.toSet()
 
     /**
-     * 书城首页只展示这几个入口：起点、番茄，加上自己爬下来的本地库。
+     * 书城首页展示这几个入口：起点、番茄，以及**手机直抓**（本机就能跑，不用配接口）。
      *
-     * 起点/番茄负责「按平台官方分类发现书」；正文由采集站通过换源提供，
-     * 采集站在「书源管理」里仍然可配置、可单独打开。
+     * 「本地爬虫库」只留在书源管理里，想连 PC 的人自己去开——默认不给用户加配置负担。
      */
     val STOREFRONT_IDS: Set<String> =
-        setOf("qidian", FanqieSource.ID, LocalLibrarySource.ID)
+        setOf("qidian", FanqieSource.ID, DeviceSource.ID)
 }

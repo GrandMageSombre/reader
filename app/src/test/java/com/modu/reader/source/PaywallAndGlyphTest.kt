@@ -157,6 +157,46 @@ class PaywallAndGlyphTest {
         assertEquals("在", FanqieGlyph.decode("\ue3e9", "unknown-font"))
     }
 
+    @Test
+    fun `起点书库列表解析出书名作者分类封面`() {
+        val html = """
+            <div class="all-book-list"><ul class="all-img-list cf">
+              <li><div class="book-img-box"><a href="//www.qidian.com/book/1035420986/" data-bid="1035420986">
+                <img src="//bookcover.yuewen.com/qdbimg/349573/1035420986/150" alt="玄鉴仙族在线阅读"></a></div>
+                <div class="book-mid-info">
+                  <h2><a href="//www.qidian.com/book/1035420986/" data-bid="1035420986">玄鉴仙族</a></h2>
+                  <p class="author"><a class="name" href="//my.qidian.com/author/430784443/">季越人</a><em>|</em>
+                    <a href="//www.qidian.com/xianxia/">仙侠</a><i>·</i>
+                    <a class="go-sub-type" data-typeid="22" data-subtypeid="18" href="//www.qidian.com/all/chanId22-subCateId18/">修真文明</a>
+                    <em>|</em><span>连载</span></p>
+                  <p class="intro">陆江仙熬夜猝死，残魂却附在一面满是裂痕的青灰色铜镜上。</p>
+                </div></li>
+            </ul></div>
+        """.trimIndent()
+        val list = DeviceParsers.parseQidianList(html, "device")
+        assertEquals(1, list.size)
+        val b = list[0]
+        assertEquals("玄鉴仙族", b.title)
+        assertEquals("季越人", b.author)
+        assertTrue("封面要补 https", b.cover.startsWith("https://bookcover"))
+        assertEquals("连载", b.status)
+        assertTrue("分类取不到时也要有值: ${b.category}", b.category.contains("仙侠"))
+        assertEquals("https://www.qidian.com/book/1035420986/", b.url)
+        assertEquals("device", b.sourceId)
+    }
+
+    @Test
+    fun `起点章节页正文与试读标记`() {
+        val free = "<main id='c-1'><p>第一段</p><p>第二段</p></main>"
+        val (t1, p1) = DeviceParsers.qidianTextOf(free)
+        assertEquals("第一段\n第二段", t1)
+        assertFalse(p1)
+        val vip = "<main id='c-2'><p>试读片段</p></main><a>订阅本章</a>"
+        val (t2, p2) = DeviceParsers.qidianTextOf(vip)
+        assertEquals("试读片段", t2)
+        assertTrue(p2)
+    }
+
     // ---------------- 本机抓取的解析 ----------------
 
     @Test
