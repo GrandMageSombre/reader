@@ -193,13 +193,27 @@ class BuiltinSourceRulesTest {
     }
 
     @Test
-    fun `书城只暴露起点与番茄两个入口`() {
+    fun `书城入口是起点、番茄与本地爬虫库`() {
         val ids = BuiltinSources.STOREFRONT_IDS
-        assertEquals("书城入口只应有 2 个", 2, ids.size)
+        assertEquals("书城入口应有 3 个", 3, ids.size)
         assertTrue("必须包含起点", ids.contains("qidian"))
         assertTrue("必须包含番茄", ids.contains(FanqieSource.ID))
+        // 自己爬下来的库也要能当入口：数据是本地接口，不依赖第三方站点
+        assertTrue("必须包含本地爬虫库", ids.contains(LocalLibrarySource.ID))
         // 采集站不应出现在书城入口里（它们通过换源提供正文）
         assertTrue("采集站不应作为书城入口", !ids.contains("wangshu") && !ids.contains("xbiquwk"))
+    }
+
+    @Test
+    fun `本地爬虫库的书籍地址能在本地 id 与接口地址间来回解析`() {
+        val src = LocalLibrarySource(BuiltinSources.localLibrary())
+        assertEquals("local_spider", src.cfg.id)
+        assertEquals("http://127.0.0.1:8765", src.cfg.baseUrl)
+        assertEquals("qidian:1035420986", LocalLibrarySource.bookId("local:qidian:1035420986"))
+        assertEquals("fanqie:6753575799414066190",
+            LocalLibrarySource.bookId("local:fanqie:6753575799414066190"))
+        // 不是本地地址时不要瞎猜
+        assertEquals(null, LocalLibrarySource.bookId("https://www.qidian.com/book/1/"))
     }
 
     // ---------------- 笔尖中文（xbiquwk） ----------------
@@ -314,6 +328,12 @@ class BuiltinSourceRulesTest {
             // 番茄走 JSON 接口，不依赖 HTML 规则；它靠 categories 取书
             if (cfg.id == FanqieSource.ID) {
                 assertTrue("番茄必须有分类（走 api）", cfg.categories.isNotEmpty())
+                return@forEach
+            }
+            // 本地爬虫库走自己的 JSON 接口（LocalLibrarySource），不用 CSS 规则
+            if (cfg.id == LocalLibrarySource.ID) {
+                assertTrue("本地爬虫库必须有 baseUrl（指向 PC 上的 serve）",
+                    cfg.baseUrl.startsWith("http"))
                 return@forEach
             }
             val r = cfg.rules

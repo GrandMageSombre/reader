@@ -39,3 +39,11 @@ interface BookSource {
  * 换源时自动跳过它们（拿它们当正文源没有意义）。
  */
 interface DiscoverySource
+
+/**
+ * 支持「手机端直连抓取」的源（[DeviceCrawl]）。
+ *
+ * UI 不该硬编码 `sourceId == "qidian"` 这种判断——加个能力标记，
+ * 以后接新站点只要让它的源实现本接口，详情页的「本机抓取」按钮自动出现。
+ */
+interface DeviceCrawlable

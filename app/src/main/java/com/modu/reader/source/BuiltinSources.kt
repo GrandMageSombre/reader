@@ -15,6 +15,7 @@ import com.modu.reader.data.Category
  * | 内置源 | 能拿到 | 拿不到 | 默认 |
  * |--------|--------|--------|------|
  * | 示例书库 | 本地公版节选，全部离线 | — | ✅ 开 |
+ * | 本地爬虫库 | PC 上 `tools/spider` 抓好的起点/番茄书目、目录、正文 | 没爬过的书 | ✅ 开 |
  * | 笔尖中文 | 分类书单、完整目录、正文全文、站内搜索 | — | ✅ 开 |
  * | 笔尖中文·镜像 | 同上（备用域名） | — | 关 |
  * | 望书网 | 分类书单、目录、正文、站内搜索 | — | ✅ 开 |
@@ -32,10 +33,11 @@ object BuiltinSources {
     /**
      * 默认启用的内置源。
      *
-     * 只放「不涉及第三方聚合站」的源（本地示例库 + 公版书），
+     * 只放「不涉及第三方聚合站」的源（本地示例库 + 公版书 + 本地爬虫库），
      * 其余一律默认关闭，让用户自己选——第三方聚合站的可用性与版权状态差异很大。
      */
-    val DEFAULT_ON: Set<String> = setOf("demo", "xbiquwk", "wangshu", "gutenberg")
+    val DEFAULT_ON: Set<String> =
+        setOf("demo", "xbiquwk", "wangshu", "gutenberg", LocalLibrarySource.ID)
 
     private const val UA =
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
@@ -369,9 +371,30 @@ object BuiltinSources {
     /** 示例书库（公版节选，不联网） */
     fun demo() = DemoSource.config()
 
+    /**
+     * 本地爬虫库：读 PC 上 `tools/spider` 抓下来的数据。
+     *
+     * 规则引擎在这里用不上（对面是 JSON 接口，不是 HTML），
+     * 所以 SourceManager 把它交给 [LocalLibrarySource]，本函数只提供配置骨架：
+     * `baseUrl` 就是跑 `python -m tools.spider.cli serve` 的那台电脑的 `host:port`。
+     */
+    fun localLibrary() = SourceConfig(
+        id = LocalLibrarySource.ID,
+        name = "本地爬虫库",
+        baseUrl = LocalLibrarySource.DEFAULT_API,
+        builtinGroup = GROUP,
+        note = "电脑上跑 tools/spider 抓好的起点/番茄书目与正文，通过本地 HTTP 接口读。" +
+            "换了电脑或端口，在书源管理里把 baseUrl 改成 `http://<电脑IP>:8765` 即可。" +
+            "番茄正文已做字体反混淆，起点 VIP 章只有站方给的试读片段。",
+        headers = emptyMap(),
+        categories = emptyList(),
+        rules = SourceRules()
+    )
+
     /** 全部内置源，顺序即书城里的展示顺序 */
     fun all(): List<SourceConfig> = listOf(
         demo(),
+        localLibrary(),
         xbiquwkMain(),
         xbiquwkMirror(),
         wangshu(),
@@ -386,10 +409,11 @@ object BuiltinSources {
     val IDS: Set<String> = all().map { it.id }.toSet()
 
     /**
-     * 书城首页只展示这两个入口（用户明确要求：书城点进去只有起点、番茄）。
+     * 书城首页只展示这几个入口：起点、番茄，加上自己爬下来的本地库。
      *
-     * 它们负责「按平台官方分类发现书」；正文由采集站通过换源提供，
+     * 起点/番茄负责「按平台官方分类发现书」；正文由采集站通过换源提供，
      * 采集站在「书源管理」里仍然可配置、可单独打开。
      */
-    val STOREFRONT_IDS: Set<String> = setOf("qidian", FanqieSource.ID)
+    val STOREFRONT_IDS: Set<String> =
+        setOf("qidian", FanqieSource.ID, LocalLibrarySource.ID)
 }

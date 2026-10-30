@@ -20,6 +20,12 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, DB_VERSI
         super.onConfigure(db)
         // 外键约束暂时不用，但打开它让未来的表可以显式声明
         db.setForeignKeyConstraintsEnabled(false)
+        // WAL：阅读时后台还会写正文缓存（本机抓取 / 预取），不开 WAL 容易撞 database is locked
+        try {
+            setWriteAheadLoggingEnabled(true)
+        } catch (e: Exception) {
+            // 个别机型/文件系统不支持就算了，退回默认模式
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {

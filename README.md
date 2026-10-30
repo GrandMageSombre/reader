@@ -20,6 +20,7 @@
 | 缓存 | 章节正文、目录落 SQLite；离线可看已读章节，正文缓存优先（翻回去不重复请求） |
 | 抓全 | **目录 / 正文分页拼接**：`chapterUrl` 的 `{page}`、`chapterNext`、`contentNext` 三种规则把分页抓齐；正文散在多个容器时按文档顺序自动合并 |
 | 书源 | 导入 / 删除 / 启停 JSON 书源，剪贴板粘贴导入，一键复制模板；内置示例源不可删 |
+| 全站爬取 | 配套 `tools/spider`（PC 端 Python）：抓起点/番茄的书目、目录、正文落 SQLite，经本地接口喂给阅读器；番茄正文做**字体反混淆** |
 
 ## 书源规则引擎
 
@@ -85,11 +86,15 @@ app/src/main/java/com/modu/reader/
 │   ├── Rule.kt                # 规则求值 + 正文按块拆段
 │   ├── BookSource.kt          # 书源能力接口（接自建后端只需实现它）
 │   ├── HtmlSource.kt          # 规则驱动的实现
+│   ├── LocalLibrarySource.kt   # 读 PC 爬虫库（tools/spider 的本地 JSON 接口）
 │   ├── DemoSource.kt          # 内置公版示例源
 │   └── SourceManager.kt       # 导入 / 删除 / 启停
 ├── repo/BookRepo.kt           # 书源 + 缓存 + 书架
 └── ui/                        # shelf / browse / detail / reader / settings
 ```
+
+配套的 PC 端爬虫在 `tools/spider/`（Python，见 [`docs/全站爬取.md`](docs/全站爬取.md)），
+不属于 Android 模块，不参与 APK 构建。
 
 ## 构建
 
@@ -238,6 +243,63 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 | 一方包含另一方 | 60（标「相近」） |
 
 
+## 全站爬取（本地爬虫库）
+
+换源是「拿第三方站点的正文」，而**全站爬取**是另一条路：直接把起点/番茄的书目、
+目录、正文抓到本机，再让阅读器读本地库。抓取的活全部在电脑上跑，手机只读一个 JSON 接口。
+
+```
+起点 / 番茄 ──tools/spider──► data/library.db ──serve──► http://<电脑IP>:8765
+                                                              │
+                                                    书城「本地爬虫库」入口
+```
+
+```bash
+pip install -r tools/spider/requirements.txt
+python -m tools.spider.cli qidian-catalog --filters 15 --pages 10   # 起点书库
+python -m tools.spider.cli qidian-chapters --limit 60              # 目录
+python -m tools.spider.cli qidian-content --limit 400              # 正文
+python -m tools.spider.cli fanqie-all --limit 900                  # 番茄一条龙
+python -m tools.spider.cli serve --port 8765                        # 给阅读器读
+```
+
+实测要点（细节见 [`docs/全站爬取.md`](docs/全站爬取.md)）：
+
+| 站点 | 关键结论 |
+|------|----------|
+| 起点 | PC 站裸请求返回 **202 + `probe.js`** 指纹页；用 headless Edge 过一次拿 cookie 后，书库 `/all/`（每页 20 本、`data-pagemax=50`、实测 **137 个筛选**）、书籍页全量目录、`main[id^=c-]` 正文都是纯 HTTP 可取 |
+| 起点 VIP | 只给约 130 字试读，入库标 `vip_preview`，阅读器里章名后加「（试读）」 |
+| 番茄 | 没有按分类列书的接口，书池就是榜单 **26 本**；目录走 `/api/reader/directory/detail`，一部长生不可期 3497 章可全拿 |
+| 番茄正文 | 每个字都被换成私有区码位，靠 `@font-face` 子集字体渲染。子集 = **SourceHanSansSC-Normal 2.002R** 的原样轮廓，用同版字体建「轮廓哈希 → 真字」表后可 **362/362 精确还原** |
+
+进「本地爬虫库」前记得改 `baseUrl`：默认 `http://127.0.0.1:8765` 只对本机有效，
+手机要填电脑的局域网 IP（`设置 → 书源管理 → 本地爬虫库`）。
+
+## 付费墙与手机端抓取
+
+先说结论（实测，见 [`docs/付费墙与换源.md`](docs/付费墙与换源.md)）：
+
+| 站点 | 未付费时服务端给什么 | 能不能技术绕过 |
+|------|----------------------|----------------|
+| 起点 VIP | 约 130 字试读 +「订阅本章」 | 不能：HTML 里没有后文 |
+| 番茄付费章 | 空正文 / `preview` 短片段 | 不能：`__INITIAL_STATE__` 里就没有 |
+| 番茄 App 接口 | 无签名 → 404 / 空响应 | 要逆向 native libsign，成本极高且易失效 |
+
+能落地的三条路，都已经接进 App：
+
+1. **本机抓取**（详情页按钮，只在起点/番茄出现）：隐藏 WebView 跑一遍页面过掉
+   `probe.js` / 验证码中间页 → 拿 cookie → 直接抓目录与正文写进本地缓存。
+   番茄正文用**内置字形表**还原（`assets/fanqie_glyphs.json`，362 条），
+   所以手机上不需要 PC，也不用解析 woff2。
+2. **账号态**：`WebGate.loginCookie()` 用 WebView 打开站点，你自己登录后取回 cookie，
+   已订阅的章节就是全文（账号密码不落盘）。
+3. **付费章自动换源**：抓到试读/空正文时，自动去采集站按「书名 + 章名」捞正文，
+   同名章按预期位置纠偏。实测（望书网，抽样 12 章）：全职法师 11/12、
+   仙人消失之后 11/12、修真聊天群 11/12、凡人修仙传 11/12，VIP 章正文 1172–3379 字。
+
+所以：**手机抓你在看的那几本，PC 铺全站，VIP 章走换源**。
+
+
 ## 内置示例源
 
 「示例书库」不联网，内容为公版古典名著节选（西游记 / 红楼梦 / 三国演义 / 水浒传 / 唐诗 / 古文观止 /
@@ -252,6 +314,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 | 书源 | 能拿到 | 拿不到 | 默认 |
 |------|--------|--------|------|
 | 示例书库 | 本地公版节选，完全离线 | — | ✅ 开 |
+| 本地爬虫库 | `tools/spider` 抓好的起点/番茄书目、目录、正文（JSON 接口） | 没爬过的书 | ✅ 开 |
 | 三一小说（31xs） | 6 个分类书单、详情、**完整目录**、**正文全文** | — | ✅ 开 |
 | 古登堡计划 | 中文公版书，**全文可读** | — | ✅ 开 |
 | 望书网 | 7 个分类、目录（实测 240+ 章）、正文、**站内搜索** | — | 关 |
@@ -304,6 +367,7 @@ POST 请求体、`tag.p.1` 这类**同级别索引**（Legado 的 `.1` 与 CSS `
 - 目录 / 正文分页拼接要自己在书源里配规则（`chapterUrl` 的 `{page}`、`chapterNext`、`contentNext`），
   引擎不去猜站点的翻页规律
 - 番茄 / 微信读书的正文页依赖 JS 渲染，内置源只取公开的书籍信息与目录
+  （要读番茄正文，用 `tools/spider` 抓成本地库，走「本地爬虫库」）
 - 第三方 Legado 书源里的 JS / XPath / POST 规则不转换，相关功能留空
 - 社区书源大部分站点不可用（JS 渲染 / 需登录 / 分类路径对不上），内置源只收录逐层验证过的
 - 书源自检还没做（导入后要在书城里点一次才知道规则对不对）

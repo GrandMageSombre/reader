@@ -13,3 +13,12 @@ local.properties
 releases/
 # 工具运行时目录
 .reasonix/
+
+# 爬虫运行时产物（数据、cookie、临时页、字体表都可重建）
+/data/
+/tools/_probe/
+/tools/spider/assets/*.otf
+/tools/spider/assets/glyph_table.json
+__pycache__/
+*.pyc
+/build_*.log

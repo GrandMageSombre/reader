@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +82,20 @@ fun DetailScreen(
     var swapCandidates by remember { mutableStateOf<List<SwapCandidate>>(emptyList()) }
     var currentSwap by remember { mutableStateOf<BookSwap?>(null) }
     var swapKey by remember { mutableStateOf(0) }
+
+    // ---- 本机抓取（起点/番茄直连）：任务挂在 App 上，离开本页也不会被取消 ----
+    val crawl by app.repo.crawlState.collectAsState()
+    val crawlMine = crawl?.takeIf { it.bookUrl == bookUrl }
+    val deviceBusy = crawlMine?.running == true
+    val deviceState = crawlMine?.message.orEmpty()
+
+    // 抓完后直接从本地库刷新目录，不再联网（避免把抓取成功反显成加载失败）
+    LaunchedEffect(crawlMine?.finished, crawlMine?.message) {
+        if (crawlMine?.finished == true) {
+            chapters = app.repo.cachedChapters(bookUrl)
+            if (chapters.isNotEmpty()) chaptersError = null
+        }
+    }
 
     LaunchedEffect(bookUrl, reloadKey) {
         loading = true
@@ -233,7 +248,8 @@ fun DetailScreen(
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             OutlinedButton(
                                 onClick = {
@@ -244,6 +260,27 @@ fun DetailScreen(
                             ) {
                                 Text(if (currentSwap != null) "已换源 · 点击更换" else "换源阅读")
                             }
+                            // 起点 / 番茄：本机直连抓一次（WebView 过反爬，目录+正文进本地缓存）
+                            if (app.sources.isDeviceCrawlable(sourceId)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val b = book ?: return@OutlinedButton
+                                        app.repo.startCrawl(sourceId, bookUrl, b.title, limit = 30)
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !deviceBusy
+                                ) {
+                                    Text(if (deviceBusy) "抓取中…" else "本机抓取")
+                                }
+                            }
+                        }
+                        if (deviceState.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                deviceState,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                         if (currentSwap != null) {
                             Spacer(Modifier.height(4.dp))

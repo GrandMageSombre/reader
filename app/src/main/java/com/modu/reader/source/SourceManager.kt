@@ -111,6 +111,8 @@ class SourceManager(context: Context) {
         val cfg = byId(id) ?: return null
         return when {
             cfg.id == DemoSource.ID -> DemoSource(cfg)
+            // 本地爬虫库：数据来自 PC 上 tools/spider 抓好的库，走 JSON 接口
+            cfg.id == LocalLibrarySource.ID -> LocalLibrarySource(cfg)
             // 番茄走 JSON 接口（HTML 列表拿不到），且标为发现源
             cfg.id == FanqieSource.ID -> FanqieDiscoverySource(cfg)
             // 起点：分类发现 + 免费章节，VIP 抓不到 → 标为发现源
@@ -138,6 +140,9 @@ class SourceManager(context: Context) {
 
     /** 这个源是不是「只负责发现书、正文要靠换源」的类型 */
     fun isDiscovery(id: String): Boolean = source(id) is DiscoverySource
+
+    /** 这个源支不支持「手机端直连抓取」（详情页据此显示「本机抓取」按钮） */
+    fun isDeviceCrawlable(id: String): Boolean = source(id) is DeviceCrawlable
 
     fun available(): List<SourceConfig> = _sources.filter { it.enabled }
 

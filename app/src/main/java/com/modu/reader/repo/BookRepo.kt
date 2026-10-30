@@ -8,13 +8,19 @@ import com.modu.reader.data.Chapter
 import com.modu.reader.data.ShelfBook
 import com.modu.reader.data.SwapCandidate
 import com.modu.reader.source.BookSource
+import com.modu.reader.source.DeviceCrawl
 import com.modu.reader.source.DiscoverySource
+import com.modu.reader.source.Paywall
 import com.modu.reader.source.SwapMatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 业务胶水层：书源 + 本地缓存 + 书架。
@@ -22,8 +28,27 @@ import kotlinx.coroutines.withContext
  */
 class BookRepo(private val app: App) {
 
-    /** 生命周期跟 App 一致，用于「界面已经关掉也要落盘」的写操作 */
+    /** 手机端抓取的状态：任务是 App 级的，离开详情页不会被取消 */
+    data class CrawlState(
+        val bookUrl: String,
+        val running: Boolean,
+        val message: String,
+        val finished: Boolean = false
+    )
+
+    /** 生命周期跟 App 一致，用于「界面已经关掉也要落盘」的写操作与长任务 */
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** 有付费墙的两个源：正文是试读/空的时候才去采集站兜底 */
+    private val PAID_WALL_SOURCES = setOf("qidian", "fanqie")
+
+    /** 付费章兜底结果缓存（key = 书名|章名，只缓存**命中**，失败下次还能重试） */
+    private val chapterFallbackCache = ConcurrentHashMap<String, String>()
+
+    private val _crawlState = MutableStateFlow<CrawlState?>(null)
+
+    /** 本机抓取的进度/结果，界面用 collectAsState 订阅 */
+    val crawlState: StateFlow<CrawlState?> = _crawlState
 
     private fun src(id: String): BookSource =
         app.sources.source(id) ?: throw IllegalStateException("书源不存在或已被删除")
@@ -83,10 +108,129 @@ class BookRepo(private val app: App) {
             app.db.loadContent(key)?.takeIf { it.isNotBlank() }?.let { return@withContext it }
         }
         val (src, book) = effective(sourceId, bookUrl, bookTitle)
-        val text = src.content(book, chapter)
-        if (text.isNotBlank()) app.db.saveContent(key, text)
+        var text = ""
+        var failure: Exception? = null
+        try {
+            text = src.content(book, chapter)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            failure = e
+        }
+        // 起点 VIP / 番茄付费章：站点只给试读、空正文，甚至直接报错
+        // → 自动去采集站按「书名 + 章名」捞正文
+        if (sourceId in PAID_WALL_SOURCES &&
+            (failure != null || Paywall.needsFallback(text))
+        ) {
+            val alt = chapterFromCollectors(bookUrl, bookTitle, chapter, sourceId)
+            if (!alt.isNullOrBlank()) {
+                text = alt
+                failure = null
+            }
+        }
+        if (text.isBlank()) {
+            throw failure ?: IllegalStateException("这一章正文是空的：${chapter.title}")
+        }
+        // 试读片段不进缓存：否则下次直接命中缓存，再也不会去兜底
+        if (!Paywall.looksPaid(text)) app.db.saveContent(key, text)
         text
     }
+
+    /**
+     * 付费章兜底：在采集站里按书名搜索，再用「书名 + 章名」对齐到同一章。
+     *
+     * 只在付费墙挡住时调用（[Paywall.needsFallback]）；**只缓存命中的正文**，
+     * 没命中的下次还能重试（一次临时网络失败不该让这章永久失效）。
+     */
+    private suspend fun chapterFromCollectors(
+        bookUrl: String,
+        bookTitle: String,
+        chapter: Chapter,
+        excludeSourceId: String
+    ): String? {
+        val chapterTitle = chapter.title
+        val cacheKey = "$bookTitle|$chapterTitle"
+        chapterFallbackCache[cacheKey]?.let { return it }
+
+        val swapSourceId = app.db.loadSwap(bookUrl)?.sourceId
+        val pool = app.sources.available()
+            .filter {
+                it.id != excludeSourceId && it.id != swapSourceId &&
+                    !app.sources.isDiscovery(it.id)
+            }
+            .mapNotNull { app.sources.source(it.id) }
+
+        // 起点这边一共多少章：用来把「第 N 章」折算成采集站目录里的预期位置
+        val localTotal = try {
+            app.db.loadChapters(bookUrl).size
+        } catch (e: Exception) {
+            0
+        }
+
+        var found: String? = null
+        outer@ for (s in pool.take(3)) {
+            try {
+                val hits = s.search(bookTitle, 1).filter { Paywall.sameBook(it.title, bookTitle) }
+                    .take(2)
+                for (h in hits) {
+                    val list = s.chapters(h)
+                    if (list.isEmpty()) continue
+                    val hint = if (localTotal > 0) {
+                        (chapter.index.toLong() * list.size / localTotal).toInt()
+                    } else {
+                        -1
+                    }
+                    val idx = Paywall.findChapter(list.map { it.title }, chapterTitle, hint)
+                    if (idx < 0) continue
+                    val body = s.content(h, list[idx])
+                    if (body.isNotBlank() && body.length > Paywall.SUSPICIOUS_CHARS) {
+                        found = body
+                        break@outer
+                    }
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                // 这个采集站挂了就换下一个
+            }
+        }
+        if (found != null) {
+            if (chapterFallbackCache.size > 200) chapterFallbackCache.clear()
+            chapterFallbackCache[cacheKey] = found
+        }
+        return found
+    }
+
+    /**
+     * 手机端直连抓取（WebView 过反爬 + 本机抓目录/正文）。
+     *
+     * 任务挂在 App 级作用域上：用户翻到阅读器或返回上一页，抓取会继续跑完，
+     * 进度通过 [crawlState] 订阅。同一时间只允许一个任务。
+     */
+    fun startCrawl(sourceId: String, bookUrl: String, title: String, limit: Int = 30) {
+        if (_crawlState.value?.running == true) return
+        _crawlState.value = CrawlState(bookUrl, true, "准备中…")
+        io.launch {
+            try {
+                val out = DeviceCrawl(app.db).crawl(app, sourceId, bookUrl, limit) { msg ->
+                    _crawlState.value = CrawlState(bookUrl, true, msg)
+                }
+                _crawlState.value = CrawlState(bookUrl, false, out.log, finished = true)
+            } catch (ce: CancellationException) {
+                _crawlState.value = CrawlState(bookUrl, false, "抓取已取消", finished = true)
+                throw ce
+            } catch (e: Exception) {
+                _crawlState.value = CrawlState(
+                    bookUrl, false, "抓取出错：${e.message ?: e.javaClass.simpleName}",
+                    finished = true
+                )
+            }
+        }
+    }
+
+    /** 抓完后直接从本地库读目录（不重新联网，避免把成功反显成失败） */
+    suspend fun cachedChapters(bookUrl: String): List<Chapter> =
+        withContext(Dispatchers.IO) { app.db.loadChapters(bookUrl) }
 
     /** 阅读进度（章节序号 / 滚动位置 / 章节标题），强制走 IO */
     suspend fun progress(sourceId: String, bookUrl: String): Triple<Int, Int, String>? =
