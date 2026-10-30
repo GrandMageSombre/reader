@@ -6,14 +6,25 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /**
- * 本地库：书架 / 章节缓存 / 正文缓存。
+ * 本地库：书架 / 章节缓存 / 正文缓存 / 换源记录。
  * 只用系统 SQLite，不引注解处理器，编译更快也更稳。
+ *
+ * 版本历史：
+ * - v1：shelf / chapters / content
+ * - v2：新增 swap（换源记录）。**加表必须升版本号**，否则已装过的用户
+ *   onCreate/onUpgrade 都不会跑，表永远建不出来（v1.4.0 就踩过这个坑）。
  */
-class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, 1) {
+class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, DB_VERSION) {
+
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        // 外键约束暂时不用，但打开它让未来的表可以显式声明
+        db.setForeignKeyConstraintsEnabled(false)
+    }
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
-            """CREATE TABLE shelf(
+            """CREATE TABLE IF NOT EXISTS shelf(
                 source_id TEXT NOT NULL,
                 book_url TEXT NOT NULL,
                 title TEXT NOT NULL DEFAULT '',
@@ -27,42 +38,49 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, 1) {
                 updated_at INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(source_id, book_url))"""
         )
-        db.execSQL(
-            """CREATE TABLE chapters(
-                book_url TEXT NOT NULL,
-                idx INTEGER NOT NULL,
-                title TEXT NOT NULL DEFAULT '',
-                url TEXT NOT NULL DEFAULT '',
-                PRIMARY KEY(book_url, idx))"""
-        )
-        db.execSQL(
-            """CREATE TABLE content(
-                ckey TEXT PRIMARY KEY,
-                body TEXT NOT NULL DEFAULT '',
-                ts INTEGER NOT NULL DEFAULT 0)"""
-        )
+        createChaptersTable(db)
+        createContentTable(db)
         createSwapTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // 只有缓存表结构变化时才走到这里：重建缓存，书架保留
-        db.execSQL("DROP TABLE IF EXISTS chapters")
-        db.execSQL("DROP TABLE IF EXISTS content")
+        // 只有缓存表结构变化时才重建缓存，书架保留
+        if (oldVersion < 2) {
+            // v1 -> v2：只加 swap 表，不动其它表（v1 的表结构没变）
+            createSwapTable(db)
+        }
+        // 兜底：任何版本升级后都确保所有表存在。
+        // 用 IF NOT EXISTS，所以对已有表无副作用——这样即使某次漏了分支也不会炸。
+        createChaptersTable(db)
+        createContentTable(db)
+        createSwapTable(db)
+    }
+
+    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // 降级（装回旧版本）不该崩：确保当前版本需要的表都在
+        createChaptersTable(db)
+        createContentTable(db)
+        createSwapTable(db)
+    }
+
+    private fun createChaptersTable(db: SQLiteDatabase) {
         db.execSQL(
-            """CREATE TABLE chapters(
+            """CREATE TABLE IF NOT EXISTS chapters(
                 book_url TEXT NOT NULL,
                 idx INTEGER NOT NULL,
                 title TEXT NOT NULL DEFAULT '',
                 url TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY(book_url, idx))"""
         )
+    }
+
+    private fun createContentTable(db: SQLiteDatabase) {
         db.execSQL(
-            """CREATE TABLE content(
+            """CREATE TABLE IF NOT EXISTS content(
                 ckey TEXT PRIMARY KEY,
                 body TEXT NOT NULL DEFAULT '',
                 ts INTEGER NOT NULL DEFAULT 0)"""
         )
-        createSwapTable(db)
     }
 
     /** 换源记录：「发现源」的书 -> 第三方源上的书 */
@@ -241,36 +259,71 @@ class Db(context: Context) : SQLiteOpenHelper(context, "modu.db", null, 1) {
             put("score", s.score)
             put("updated_at", System.currentTimeMillis())
         }
-        writableDatabase.insertWithOnConflict("swap", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        try {
+            writableDatabase.insertWithOnConflict("swap", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // 表缺失（历史版本的库没升级）时自愈一次，再不行才放弃
+            createSwapTable(writableDatabase)
+            writableDatabase.insertWithOnConflict("swap", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
     }
 
+    /**
+     * 读换源记录。
+     *
+     * 表缺失时返回 null（= 没换过源）而不是抛异常——换源只是附加能力，
+     * 不该因为它让整本书的目录都加载不了。
+     */
     fun loadSwap(bookUrl: String): BookSwap? {
-        readableDatabase.rawQuery(
-            "SELECT book_url, source_id, source_book_url, matched_title, matched_author, score" +
-                " FROM swap WHERE book_url=? LIMIT 1",
-            arrayOf(bookUrl)
-        ).use { c ->
-            if (!c.moveToFirst()) return null
-            return BookSwap(
-                bookUrl = c.getString(0),
-                sourceId = c.getString(1),
-                sourceBookUrl = c.getString(2),
-                matchedTitle = c.getString(3),
-                matchedAuthor = c.getString(4),
-                score = c.getInt(5)
-            )
+        return try {
+            readableDatabase.rawQuery(
+                "SELECT book_url, source_id, source_book_url, matched_title, matched_author, score" +
+                    " FROM swap WHERE book_url=? LIMIT 1",
+                arrayOf(bookUrl)
+            ).use { c ->
+                if (!c.moveToFirst()) return null
+                BookSwap(
+                    bookUrl = c.getString(0),
+                    sourceId = c.getString(1),
+                    sourceBookUrl = c.getString(2),
+                    matchedTitle = c.getString(3),
+                    matchedAuthor = c.getString(4),
+                    score = c.getInt(5)
+                )
+            }
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // 顺手把表补上，下次就正常了
+            try {
+                createSwapTable(writableDatabase)
+            } catch (ignored: Exception) {
+                // 补不上也不能影响阅读
+            }
+            null
         }
     }
 
     fun clearSwap(bookUrl: String): BookSwap? {
         val old = loadSwap(bookUrl)
-        writableDatabase.delete("swap", "book_url=?", arrayOf(bookUrl))
+        try {
+            writableDatabase.delete("swap", "book_url=?", arrayOf(bookUrl))
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // 表本来就不存在时无需清理
+        }
         // 换源后以前的目录/正文缓存都不再适用
         writableDatabase.delete("chapters", "book_url=?", arrayOf(bookUrl))
         return old
     }
 
     fun clearAllSwap() {
-        writableDatabase.delete("swap", null, null)
+        try {
+            writableDatabase.delete("swap", null, null)
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // 忽略
+        }
+    }
+
+    companion object {
+        /** 加表/改表必须 +1，否则老用户的库不会升级 */
+        const val DB_VERSION = 2
     }
 }

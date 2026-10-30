@@ -53,10 +53,33 @@ fun friendlyError(e: Throwable): String = when (e) {
     is java.net.SocketTimeoutException -> "请求超时，站点太慢或网络不通"
     is java.net.ConnectException -> "连接被拒绝，站点可能已经挂了"
     is javax.net.ssl.SSLException -> "HTTPS 握手失败，站点证书有问题"
-    is java.io.IOException -> "网络请求失败：${e.message ?: "IO 错误"}"
-    is IllegalStateException -> e.message?.takeIf { it.isNotBlank() } ?: "请求失败"
-    is IllegalArgumentException -> e.message?.takeIf { it.isNotBlank() } ?: "书源配置有误"
-    else -> e.message?.takeIf { it.isNotBlank() } ?: "未知错误"
+    // SQLite 原始报错（"no such table: swap (code 1 SQLITE_ERROR)"）不能给用户看
+    is android.database.sqlite.SQLiteException ->
+        "本地数据出了点问题。请到「设置」里清一次缓存；还不行就重装应用"
+
+    is java.io.IOException -> "网络请求失败" + brief(e)
+    is IllegalStateException -> e.message?.takeIf { it.isNotBlank() && !looksTechnical(it) }
+        ?: "请求失败"
+
+    is IllegalArgumentException -> e.message?.takeIf { it.isNotBlank() && !looksTechnical(it) }
+        ?: "书源配置有误"
+
+    else -> e.message?.takeIf { it.isNotBlank() && !looksTechnical(it) } ?: "未知错误"
+}
+
+/** 兜底：明显是技术术语的 message 就不往界面上放 */
+private fun looksTechnical(msg: String): Boolean {
+    val m = msg.lowercase()
+    return m.contains("sqlite") || m.contains("no such table") || m.contains("sql ") ||
+        m.contains("exception") || m.contains("nullpointer") ||
+        Regex("\\bat [a-z]+\\.[a-z0-9_.]+\\(").containsMatchIn(m)
+}
+
+/** 附在错误后面的一小截原始信息，过长或含技术栈就丢掉 */
+private fun brief(e: Throwable): String {
+    val m = e.message?.trim().orEmpty()
+    if (m.isEmpty() || looksTechnical(m)) return ""
+    return "：" + m.take(80)
 }
 
 @Composable
