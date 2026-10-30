@@ -27,23 +27,76 @@ import java.net.URLEncoder
  */
 class LocalLibrarySource(override val cfg: SourceConfig) : BookSource {
 
+    /** 运行时地址：优先「上次发现/手填的」，其次书源配置里的 baseUrl */
+    @Volatile
+    private var resolved: String? = null
+
     private val api: String
-        get() = cfg.baseUrl.ifBlank { DEFAULT_API }.trimEnd('/')
+        get() = resolved
+            ?: com.modu.reader.data.SettingsStore.localSpiderApi.ifBlank { "" }
+                .ifBlank { cfg.baseUrl }
+                .ifBlank { DEFAULT_API }
+                .trimEnd('/')
+
+    /**
+     * 连接前先确认地址可用；连不上就**自动发现**（UDP 广播找电脑），
+     * 发现到就换过去。这样用户不用知道电脑的局域网 IP。
+     */
+    private suspend fun ensureReachable(): String = withContext(Dispatchers.IO) {
+        resolved?.let { return@withContext it }
+        val candidates = listOfNotNull(
+            com.modu.reader.data.SettingsStore.localSpiderApi.takeIf { it.isNotBlank() },
+            cfg.baseUrl.takeIf { it.isNotBlank() },
+            DEFAULT_API
+        ).distinct()
+        for (c in candidates) {
+            if (ping(c)) {
+                resolved = c.trimEnd('/')
+                return@withContext resolved!!
+            }
+        }
+        // 都不通 → 局域网广播找一次
+        val found = LocalDiscovery.discover()
+        if (found != null && ping(found)) {
+            resolved = found
+            return@withContext found
+        }
+        resolved = candidates.first().trimEnd('/')
+        resolved!!
+    }
+
+    /**
+     * 探活：只做 TCP 连接（600ms 超时），别拿 HTTP GET 去等 15 秒。
+     * 地址对不对由后续真实请求确认，这里只负责「快速排除明显不通的候选」。
+     */
+    private fun ping(base: String): Boolean {
+        val hostPort = base.removePrefix("http://").removePrefix("https://").trimEnd('/')
+        val host = hostPort.substringBefore(':')
+        val port = hostPort.substringAfter(':', "80").substringBefore('/').toIntOrNull() ?: 80
+        return try {
+            java.net.Socket().use { it.connect(java.net.InetSocketAddress(host, port), 600) }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     // ---------------- 接口访问 ----------------
     private suspend fun get(path: String, vararg params: Pair<String, String?>): JSONObject =
         withContext(Dispatchers.IO) {
+            val base = ensureReachable()
             val query = params.mapNotNull { (k, v) ->
                 v?.let { "$k=${URLEncoder.encode(it, "UTF-8")}" }
             }.joinToString("&")
-            val url = if (query.isEmpty()) api + path else api + path + "?" + query
+            val url = if (query.isEmpty()) base + path else base + path + "?" + query
             val body = try {
                 Http.get(url, "utf-8", cfg.headers)
             } catch (e: Exception) {
                 throw IllegalStateException(
-                    "连不上本地爬虫库（$api）。\n" +
-                        "在电脑上先跑：python -m tools.spider.cli serve --port 8765\n" +
-                        "手机和电脑要在同一个 WiFi 下，书源地址填电脑的局域网 IP。",
+                    "连不上本地爬虫库（$base）。\n" +
+                        "① 电脑上跑：python -m tools.spider.cli serve --port 8765\n" +
+                        "② 手机和电脑连同一个 WiFi（有些路由开了「AP 隔离」也会连不上）\n" +
+                        "③ 已开启局域网自动发现，确认电脑防火墙放行 8765/UDP 8766",
                     e
                 )
             }

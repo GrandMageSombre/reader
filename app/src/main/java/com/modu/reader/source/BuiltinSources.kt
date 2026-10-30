@@ -37,7 +37,8 @@ object BuiltinSources {
      * 其余一律默认关闭，让用户自己选——第三方聚合站的可用性与版权状态差异很大。
      */
     val DEFAULT_ON: Set<String> =
-        setOf("demo", "xbiquwk", "wangshu", "gutenberg", DeviceSource.ID)
+        setOf("demo", "xbiquwk", "wangshu", "gutenberg", DeviceSource.ID,
+            LocalLibrarySource.ID)
 
     private const val UA =
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
@@ -430,8 +431,9 @@ object BuiltinSources {
     /**
      * 书城首页展示这几个入口：起点、番茄，以及**手机直抓**（本机就能跑，不用配接口）。
      *
-     * 「本地爬虫库」只留在书源管理里，想连 PC 的人自己去开——默认不给用户加配置负担。
+     * 「本地爬虫库」也放回书城：它现在能**局域网自动发现**电脑（UDP 8766），
+     * 不用手填 IP；没开电脑时点进去会给一条可执行的提示，不影响别的入口。
      */
     val STOREFRONT_IDS: Set<String> =
-        setOf("qidian", FanqieSource.ID, DeviceSource.ID)
+        setOf("qidian", FanqieSource.ID, DeviceSource.ID, LocalLibrarySource.ID)
 }

@@ -1,45 +1,38 @@
-"""为 v1.9.0 建 tag + GitHub Release 并上传两个 APK 资产。
+"""发版：建 tag + GitHub Release，并上传 releases/ 下的 APK 资产。
 
-github.com:443 被墙时，push 走不了，但 api.github.com 通常还通；
-Release 的 tag 由 API 自动创建（target_commitish=main）。
+版本号从 `app/build.gradle.kts` 的 `versionName` 读，资产名按
+`releases/modu-v<版本>-android.apk` 与 `-debug.apk` 约定查找。
+
+    python -m tools.make_release --dry-run      # 只打印将要做什么
+    python -m tools.make_release                # 真发
+    python -m tools.make_release --notes-file notes.md
+
+token 从 GCM（git credential fill）取，不落盘、不进日志。
 """
+from __future__ import annotations
+
+import argparse
 import json
-import mimetypes
 import os
+import re
 import subprocess
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+GRADLE = ROOT / "app/build.gradle.kts"
+RELEASES = ROOT / "releases"
+
 OWNER, REPO = "GrandMageSombre", "reader"
-TAG = "v1.9.0"
 
-NOTES = """## 手机直抓：不用连 PC 了
 
-书城新增内置书源「**手机直抓**」：App 内的隐藏 WebView 过一次反爬，之后直接在手机上抓
-起点书库（15 个分类、分页）与番茄榜单的目录与正文。不需要跑 `serve.py`、不需要填 IP。
-
-- 起点：书库 / 全量目录 / 正文（VIP 章只有站方试读，自动落到换源兜底）
-- 番茄：榜单 26 本 / 全量目录 / 正文（私有区码位用内置 362 条字形表还原）
-- 书城入口调整为：起点 / 番茄 / 手机直抓；「本地爬虫库」移出入口（要连 PC 的人自己开）
-
-## 本轮同时包含
-
-- 全站爬虫 `tools/spider`（PC）：起点 137 个筛选取全、番茄字体反混淆、本地接口
-- 付费墙边界实测与自动换源兜底（抽样命中 11/12，VIP 章正文 1172–3379 字）
-- 第 5 轮四视角审查的 21 条修复 + P2/P3 清理
-
-## 安装
-
-- `modu-v1.9.0-android.apk`（9.2MB）：发布包，沿用 debug 签名，可直接装
-- `modu-v1.9.0-debug.apk`（13MB）：带调试信息，排查问题用
-
-包名 `com.modu.reader`，versionCode 12 / versionName 1.9.0，minSdk 26。
-"""
-
-ASSETS = [
-    ("releases/modu-v1.9.0-android.apk", "application/vnd.android.package-archive"),
-    ("releases/modu-v1.9.0-debug.apk", "application/vnd.android.package-archive"),
-]
+def version() -> str:
+    text = GRADLE.read_text(encoding="utf-8")
+    m = re.search(r'versionName\s*=\s*"([^"]+)"', text)
+    if not m:
+        raise SystemExit("读不到 versionName")
+    return m.group(1)
 
 
 def token() -> str:
@@ -51,74 +44,122 @@ def token() -> str:
     for line in r.stdout.splitlines():
         if line.startswith("password="):
             return line.split("=", 1)[1].strip()
-    raise SystemExit("取不到 token")
+    raise SystemExit("取不到 GitHub token（GCM 里没有 github.com 凭据）")
 
 
-TOKEN = token()
-
-
-def api(path: str, method: str = "GET", body=None):
+def api(path: str, method: str = "GET", body=None, tok: str = ""):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
         "https://api.github.com" + path, data=data, method=method,
-        headers={"Authorization": "Bearer " + TOKEN,
+        headers={"Authorization": "Bearer " + tok,
                  "Accept": "application/vnd.github+json",
-                 "User-Agent": "wb", "Content-Type": "application/json"})
+                 "User-Agent": "modu-release", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         raw = resp.read().decode()
         return json.loads(raw) if raw.strip() else {}
 
 
-def upload(upload_url: str, path: Path, ctype: str):
+def upload(upload_url: str, path: Path, ctype: str, tok: str):
     url = upload_url.split("{", 1)[0] + "?name=" + urllib.parse.quote(path.name)
     data = path.read_bytes()
     req = urllib.request.Request(
         url, data=data, method="POST",
-        headers={"Authorization": "Bearer " + TOKEN,
+        headers={"Authorization": "Bearer " + tok,
                  "Accept": "application/vnd.github+json",
-                 "User-Agent": "wb", "Content-Type": ctype,
+                 "User-Agent": "modu-release", "Content-Type": ctype,
                  "Content-Length": str(len(data))})
-    with urllib.request.urlopen(req, timeout=600) as resp:
+    with urllib.request.urlopen(req, timeout=900) as resp:
         return json.loads(resp.read().decode())
 
 
-def main():
-    releases = api(f"/repos/{OWNER}/{REPO}/releases?per_page=20")
-    rel = next((r for r in releases if r["tag_name"] == TAG), None)
+def default_notes(ver: str) -> str:
+    """从 版本说明.md 里抠出对应小节的正文当 Release 说明"""
+    doc = (ROOT / "版本说明.md")
+    if not doc.exists():
+        return f"v{ver}"
+    text = doc.read_text(encoding="utf-8")
+    m = re.search(rf"^## v{re.escape(ver)}（[^）]*）\s*$(.*?)(?=^## v|\Z)",
+                  text, re.S | re.M)
+    body = (m.group(1).strip() if m else "")
+    head = f"## 安装\n\n- `modu-v{ver}-android.apk`：发布包（沿用 debug 签名，可直接装）\n" \
+           f"- `modu-v{ver}-debug.apk`：带调试信息\n\n"
+    return (body + "\n\n" if body else "") + head
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="python -m tools.make_release")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--notes-file", default="")
+    ap.add_argument("--tag", default="")
+    args = ap.parse_args()
+
+    ver = version()
+    tag = args.tag or f"v{ver}"
+    notes = Path(args.notes_file).read_text(encoding="utf-8") if args.notes_file \
+        else default_notes(ver)
+
+    assets = [
+        (RELEASES / f"modu-{tag}-android.apk", "application/vnd.android.package-archive"),
+        (RELEASES / f"modu-{tag}-debug.apk", "application/vnd.android.package-archive"),
+    ]
+    print(f"版本 {ver} → tag {tag}")
+    for p, _ in assets:
+        print(f"  {'OK ' if p.exists() else '缺 '} {p.relative_to(ROOT)} "
+              f"{p.stat().st_size // 1024 if p.exists() else 0} KB")
+    if not any(p.exists() for p, _ in assets):
+        raise SystemExit("releases/ 里没有对应版本的 APK，先跑 assembleRelease/assembleDebug")
+
+    if args.dry_run:
+        print("[dry-run] 到此为止")
+        return
+
+    tok = token()
+    head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                          text=True).stdout.strip()
+    rels = api(f"/repos/{OWNER}/{REPO}/releases?per_page=30", tok=tok)
+    rel = next((r for r in rels if r["tag_name"] == tag), None)
     if rel is None:
         rel = api(f"/repos/{OWNER}/{REPO}/releases", "POST", {
-            "tag_name": TAG,
+            "tag_name": tag,
             "target_commitish": "main",
-            "name": f"v1.9.0 · 手机直抓 / MoDuReader",
-            "body": NOTES,
+            "name": f"{tag} · MoDuReader",
+            "body": notes,
             "draft": False,
             "prerelease": False,
-        })
+        }, tok=tok)
         print("已创建 Release:", rel["html_url"])
     else:
-        print("Release 已存在:", rel["html_url"])
+        api(f"/repos/{OWNER}/{REPO}/releases/{rel['id']}", "PATCH",
+            {"body": notes}, tok=tok)
+        print("Release 已存在，更新说明:", rel["html_url"])
+
+    # tag 跟到本地 HEAD（发版提交可能晚于建 tag）
+    try:
+        ref = api(f"/repos/{OWNER}/{REPO}/git/ref/tags/{tag}", tok=tok)
+        if ref["object"]["sha"] != head:
+            api(f"/repos/{OWNER}/{REPO}/git/refs/tags/{tag}", "PATCH",
+                {"sha": head, "force": True}, tok=tok)
+            print("tag 已指向 HEAD:", head[:9])
+    except Exception as exc:  # noqa: BLE001
+        print("tag 校准跳过:", exc)
 
     existing = {a["name"]: a for a in rel.get("assets", [])}
-    import urllib.parse  # noqa: F401  (upload 里用到)
-    for rel_path, ctype in ASSETS:
-        p = Path(rel_path)
-        if not p.exists():
-            print("缺文件:", p)
+    for path, ctype in assets:
+        if not path.exists():
             continue
-        if p.name in existing:
-            api(f"/repos/{OWNER}/{REPO}/releases/assets/{existing[p.name]['id']}",
-                "DELETE")
-            print("  覆盖旧资产:", p.name)
-        a = upload(rel["upload_url"], p, ctype)
+        if path.name in existing:
+            api(f"/repos/{OWNER}/{REPO}/releases/assets/{existing[path.name]['id']}",
+                "DELETE", tok=tok)
+            print("  覆盖旧资产:", path.name)
+        a = upload(rel["upload_url"], path, ctype, tok)
         print(f"  上传 {a['name']} {a['size'] // 1024} KB")
 
-    rel = api(f"/repos/{OWNER}/{REPO}/releases/tags/{TAG}")
+    rel = api(f"/repos/{OWNER}/{REPO}/releases/tags/{tag}", tok=tok)
     print("\n最终资产:")
     for a in rel["assets"]:
-        print(f"  {a['name']:32s} {a['size'] // 1024:6d} KB  {a['browser_download_url']}")
+        print(f"  {a['name']:34s} {a['size'] // 1024:6d} KB  {a['browser_download_url']}")
     print("页面:", rel["html_url"])
 
 
 if __name__ == "__main__":
-    import urllib.parse  # noqa: F401
     main()

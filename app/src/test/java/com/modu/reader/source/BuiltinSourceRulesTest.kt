@@ -195,13 +195,13 @@ class BuiltinSourceRulesTest {
     @Test
     fun `书城入口是起点、番茄与手机直抓`() {
         val ids = BuiltinSources.STOREFRONT_IDS
-        assertEquals("书城入口应有 3 个", 3, ids.size)
+        assertEquals("书城入口应有 4 个", 4, ids.size)
         assertTrue("必须包含起点", ids.contains("qidian"))
         assertTrue("必须包含番茄", ids.contains(FanqieSource.ID))
         // 手机直抓：完全在 App 内跑，用户不需要配 PC 接口
         assertTrue("必须包含手机直抓", ids.contains(DeviceSource.ID))
-        // 「本地爬虫库」要 PC 上跑 serve，不该占书城入口，只在书源管理里可选
-        assertTrue("本地爬虫库不应作为书城入口", !ids.contains(LocalLibrarySource.ID))
+        // 本地爬虫库：现在能局域网自动发现，所以也放回书城
+        assertTrue("本地爬虫库应能进书城", ids.contains(LocalLibrarySource.ID))
         assertTrue("采集站不应作为书城入口", !ids.contains("wangshu") && !ids.contains("xbiquwk"))
     }
 

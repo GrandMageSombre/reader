@@ -159,10 +159,55 @@ class Handler(BaseHTTPRequestHandler):
         })
 
 
+DISCOVERY_PORT = 8766
+DISCOVERY_TOKEN = b"MODU_DISCOVER_V1"
+
+
+def _discovery_responder(port: int) -> None:
+    """局域网自动发现：App 往 8766 广播一个小包，这里把 端口 回给它。
+
+    这样手机端不用手填 IP（用户根本不知道自己电脑的局域网地址），
+    进「本地爬虫库」时自动连上。
+    """
+    import json as _json
+    import socket
+    import threading
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("0.0.0.0", DISCOVERY_PORT))
+    except OSError as exc:
+        print(f"[discovery] 8766 端口占用，跳过自动发现：{exc}")
+        return
+
+    def loop():
+        while True:
+            try:
+                data, addr = sock.recvfrom(256)
+            except OSError:
+                return
+            if not data.startswith(DISCOVERY_TOKEN):
+                continue
+            reply = _json.dumps({
+                "app": "modu-spider",
+                "port": port,
+                "api": f"http://{addr[0]}:{port}",
+            }).encode("utf-8")
+            try:
+                sock.sendto(reply, addr)
+            except OSError:
+                pass
+
+    threading.Thread(target=loop, daemon=True).start()
+    print(f"[discovery] 局域网自动发现已开启（UDP {DISCOVERY_PORT}）")
+
+
 def serve(port: int = 8765, host: str = "0.0.0.0") -> None:
     httpd = ThreadingHTTPServer((host, port), Handler)
+    _discovery_responder(port)
     print(f"本地爬虫库已启动：http://127.0.0.1:{port}/api/health")
-    print("在阅读器里添加书源「本地爬虫库」，地址填上面的 host:port")
+    print("阅读器里进「本地爬虫库」会自动发现这台电脑；连不上时再手填 host:port")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

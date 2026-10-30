@@ -114,7 +114,13 @@ class SourceManager(context: Context) {
             // 手机直抓：App 内的起点书库 + 番茄榜单，不需要 PC 接口
             cfg.id == DeviceSource.ID -> DeviceSource(cfg)
             // 本地爬虫库：数据来自 PC 上 tools/spider 抓好的库，走 JSON 接口
-            cfg.id == LocalLibrarySource.ID -> LocalLibrarySource(cfg)
+            cfg.id == LocalLibrarySource.ID -> {
+                // 地址可能来自「局域网自动发现」，覆盖内置的默认值
+                val discovered = com.modu.reader.data.SettingsStore.localSpiderApi
+                LocalLibrarySource(
+                    if (discovered.isBlank()) cfg else cfg.copy(baseUrl = discovered)
+                )
+            }
             // 番茄走 JSON 接口（HTML 列表拿不到），且标为发现源
             cfg.id == FanqieSource.ID -> FanqieDiscoverySource(cfg)
             // 起点：分类发现 + 免费章节，VIP 抓不到 → 标为发现源

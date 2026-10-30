@@ -48,6 +48,15 @@ object SettingsStore {
     var showDisclaimer by mutableStateOf(true)
         private set
 
+    /**
+     * 「本地爬虫库」的地址：`http://192.168.1.20:8765`。
+     *
+     * 空串表示还没连过——此时进书城会走局域网自动发现（UDP 8766），
+     * 发现到就写回这里，之后直接复用。
+     */
+    var localSpiderApi by mutableStateOf("")
+        private set
+
     fun init(ctx: Context) {
         if (sp != null) return
         val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -60,6 +69,12 @@ object SettingsStore {
         brightness = p.getFloat("brightness", -1f)
         paragraphSpacing = p.getFloat("paragraph_spacing", 0.8f)
         showDisclaimer = p.getBoolean("show_disclaimer", true)
+        localSpiderApi = p.getString("local_spider_api", "").orEmpty()
+    }
+
+    fun updateLocalSpiderApi(api: String) {
+        localSpiderApi = api.trim()
+        sp?.edit()?.putString("local_spider_api", localSpiderApi)?.apply()
     }
 
     fun updateFontSize(v: Float) {
