@@ -9,7 +9,9 @@ data class Book(
     val cover: String = "",
     val intro: String = "",
     val status: String = "",
-    val latestChapter: String = ""
+    val latestChapter: String = "",
+    /** 站点自带的官方分类（如番茄的 `男生/都市/都市重生`），空串表示没有 */
+    val category: String = ""
 )
 
 /** 章节 */

@@ -97,13 +97,17 @@ fun SwapDialog(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        "没有在其它书源里搜到这本书",
+                        "采集站里没搜到这本书",
                         style = MaterialTheme.typography.titleSmall
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "可能这本书只有当前站点有，或者在别的站点叫别的名字。\n" +
-                            "可以在「设置 → 书源管理」里多启用几个书源后重试。",
+                        "起点/番茄榜单上的新书，采集站通常还没收录——这是数据源的限制，" +
+                            "不是应用出错。\n\n" +
+                            "可以试试：\n" +
+                            "· 在「设置 → 书源管理」里把采集站全部启用，能多覆盖一些；\n" +
+                            "· 书名可能有差异（去掉副标题再搜）；\n" +
+                            "· 换一本已完结、较热门的书，收录率会高很多。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -176,18 +176,30 @@ class BuiltinSourceRulesTest {
     // ---------------- 番茄（现在是 API 发现源） ----------------
 
     @Test
-    fun `番茄作为发现源有分类且分类指向 api 路径`() {
+    fun `番茄按书自带的官方分类归类`() {
         val cfg = BuiltinSources.all().first { it.id == FanqieSource.ID }
-        assertTrue("番茄应配好分类（走 /api/rank/list）", cfg.categories.isNotEmpty())
-        assertEquals(
-            "番茄的分类应指向 JSON 接口",
-            3, cfg.categories.count { it.url.contains("/api/rank/list") }
-        )
-        // 番茄的正文抓不到，必须靠换源 —— 这里断言它没有配置 HTML 正文规则
+        assertTrue("番茄应配好分类", cfg.categories.isNotEmpty())
+
+        // 第一项是「全部」，其余是番茄自己的官方分类（如「男生/都市」）
+        assertEquals("第一项应是「全部」", FanqieSource.ALL_CATEGORY, cfg.categories.first().name)
+        val official = cfg.categories.drop(1).map { it.name }
+        assertTrue("应配置多个官方分类（实际 $official）", official.size >= 5)
         assertTrue(
-            "番茄不应配置 HTML 正文规则（正文页是 JS 渲染的）",
-            cfg.rules.content.isBlank()
+            "官方分类应带「男生/」或「女生/」前缀（番茄的分类体系）: $official",
+            official.all { it.startsWith("男生/") || it.startsWith("女生/") }
         )
+        // 正文抓不到，必须靠换源
+        assertTrue("番茄不应配置 HTML 正文规则（正文页是 JS 渲染的）", cfg.rules.content.isBlank())
+    }
+
+    @Test
+    fun `书城只暴露起点与番茄两个入口`() {
+        val ids = BuiltinSources.STOREFRONT_IDS
+        assertEquals("书城入口只应有 2 个", 2, ids.size)
+        assertTrue("必须包含起点", ids.contains("qidian"))
+        assertTrue("必须包含番茄", ids.contains(FanqieSource.ID))
+        // 采集站不应出现在书城入口里（它们通过换源提供正文）
+        assertTrue("采集站不应作为书城入口", !ids.contains("wangshu") && !ids.contains("xbiquwk"))
     }
 
     // ---------------- 笔尖中文（xbiquwk） ----------------

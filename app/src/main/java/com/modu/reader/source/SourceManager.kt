@@ -115,8 +115,25 @@ class SourceManager(context: Context) {
             cfg.id == FanqieSource.ID -> FanqieDiscoverySource(cfg)
             // 起点：分类发现 + 免费章节，VIP 抓不到 → 标为发现源
             cfg.id == "qidian" -> QidianSource(cfg)
+            // 采集站：一个书源持有一组镜像，正文抓不到时自动换站重试
+            cfg.id in MULTI_MIRROR -> BiqugeMultiSource(cfg, mirrorHosts(cfg.id))
             else -> HtmlSource(cfg)
         }
+    }
+
+    /** 支持多镜像容错的采集站 */
+    private val MULTI_MIRROR = setOf("xbiquwk", "wangshu")
+
+    /**
+     * 每个采集站的备用镜像（按实测可用性排序）。
+     *
+     * 实测（2026-10，12 个候选站）：只有望书网(8/26)、2K小说(6/26) 的搜索能用，
+     * 八一中文与其他站多半 ConnectionReset / 404。所以镜像组不做大，只放真能用的。
+     */
+    private fun mirrorHosts(id: String): List<String> = when (id) {
+        "xbiquwk" -> listOf("https://www.biquwx.la")
+        "wangshu" -> listOf("https://www.2kxs.info", "http://www.zwduxs.com")
+        else -> emptyList()
     }
 
     /** 这个源是不是「只负责发现书、正文要靠换源」的类型 */
@@ -125,6 +142,15 @@ class SourceManager(context: Context) {
     fun available(): List<SourceConfig> = _sources.filter { it.enabled }
 
     fun isBuiltin(id: String): Boolean = id in BuiltinSources.IDS
+
+    /**
+     * 书城里能作为「入口」的源。
+     *
+     * 用户要求书城只暴露起点与番茄两个入口——它们负责按官方分类发现书，
+     * 正文交给采集站（通过换源）。采集站仍然在「书源管理」里可配、可单独打开。
+     */
+    fun storefronts(): List<SourceConfig> =
+        available().filter { it.id in BuiltinSources.STOREFRONT_IDS }
 
     /** 导入一份书源 JSON（墨读自己的格式），返回解析后的配置 */
     fun importJson(text: String): SourceConfig {

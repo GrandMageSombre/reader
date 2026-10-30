@@ -108,7 +108,8 @@ class Pager<T>(private val fetch: suspend (Int) -> List<T>, private val keyOf: (
 @Composable
 fun BrowseScreen(nav: NavHostController) {
     val app = LocalContext.current.applicationContext as App
-    val sources = app.sources.available()
+    // 书城只暴露「发现源」入口：起点 / 番茄。采集站在书源管理里配置，通过换源提供正文。
+    val sources = app.sources.storefronts()
 
     var sourceId by remember { mutableStateOf(sources.firstOrNull()?.id ?: "") }
     var category by remember { mutableStateOf<Category?>(null) }
@@ -186,8 +187,8 @@ fun BrowseScreen(nav: NavHostController) {
 
         when {
             sources.isEmpty() -> EmptyView(
-                if (app.sources.sources.isEmpty()) "还没有书源" else "书源都被停用了",
-                "去「设置 → 书源管理」导入或启用书源",
+                "起点/番茄这两个入口都停用了",
+                "去「设置 → 书源管理」里启用「起点中文」或「番茄小说」",
                 Modifier.fillMaxSize()
             )
 

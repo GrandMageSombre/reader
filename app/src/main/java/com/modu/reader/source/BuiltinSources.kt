@@ -191,18 +191,36 @@ object BuiltinSources {
      * 实测：`/api/rank/list?type=N` 只有 type=0/1/2 有数据，每类 7~10 本，`page` 参数无效。
      * 所以「分类」三项就对应这三个接口，无翻页——这也是为什么要配换源。
      */
+    /**
+     * 番茄：按书自身的**官方分类**（`男生/都市/都市重生` 这种）归组展示。
+     *
+     * 实测番茄没有任何「按分类列书」的入口（详见 [FanqieSource] 的注释），
+     * 三档榜单总共只有 26 本，所以分类列表写死为实测得到的这些官方分类，
+     * 由 [FanqieSource.list] 按书的 `category` 字段过滤。
+     */
     private fun fanqie() = SourceConfig(
         id = FanqieSource.ID,
         name = "番茄小说",
         baseUrl = "https://fanqienovel.com",
         builtinGroup = GROUP,
-        note = "发现源：按分类列出番茄的书（书名/作者/简介/封面）。" +
-            "正文页由 JS 渲染抓不到，请用「换源」到第三方书源阅读。接口每类只有约 10 本、不支持翻页。",
+        note = "发现源：按番茄自己的官方分类展示（书名/作者/简介/封面/分类）。" +
+            "番茄不提供按分类抓书的接口，全站可抓的只有热榜 26 本，所以每类书目有限。" +
+            "正文页由 JS 渲染抓不到，请用「换源阅读」到采集站读正文" +
+            "（实测约 1/3 的书能在采集站找到，榜单新书常搜不到，这是数据源限制）。",
         headers = mapOf("User-Agent" to UA, "Referer" to "https://fanqienovel.com/"),
         categories = listOf(
-            Category("热榜一", "/api/rank/list?type=0"),
-            Category("热榜二", "/api/rank/list?type=1"),
-            Category("热榜三", "/api/rank/list?type=2")
+            Category(FanqieSource.ALL_CATEGORY, FanqieSource.ALL_URL),
+            // 以下为实测 26 本书里出现的官方一级/二级分类
+            Category("男生/都市", "/api/cat/male_dushi"),
+            Category("男生/玄幻", "/api/cat/male_xuanhuan"),
+            Category("男生/仙侠", "/api/cat/male_xianxia"),
+            Category("男生/历史", "/api/cat/male_lishi"),
+            Category("男生/科幻", "/api/cat/male_kehuan"),
+            Category("男生/武侠", "/api/cat/male_wuxia"),
+            Category("男生/奇幻", "/api/cat/male_qihuan"),
+            Category("男生/职场", "/api/cat/male_zhichang"),
+            Category("女生/古代言情", "/api/cat/female_gudai"),
+            Category("女生/现代言情", "/api/cat/female_xiandai")
         ),
         rules = SourceRules()
     )
@@ -366,4 +384,12 @@ object BuiltinSources {
 
     /** 内置源 id 集合：这些源不可删除 */
     val IDS: Set<String> = all().map { it.id }.toSet()
+
+    /**
+     * 书城首页只展示这两个入口（用户明确要求：书城点进去只有起点、番茄）。
+     *
+     * 它们负责「按平台官方分类发现书」；正文由采集站通过换源提供，
+     * 采集站在「书源管理」里仍然可配置、可单独打开。
+     */
+    val STOREFRONT_IDS: Set<String> = setOf("qidian", FanqieSource.ID)
 }
