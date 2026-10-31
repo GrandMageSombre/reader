@@ -192,7 +192,13 @@ class LocalLibrarySource(override val cfg: SourceConfig) : BookSource {
         val o = get("/api/book/$id/chapter/$idx")
         val text = o.optString("text")
         if (text.isBlank()) throw IllegalStateException("这一章还没爬到，先在电脑上跑一次抓正文")
-        return text
+        return when {
+            o.optBoolean("preview") ->
+                "$text\n\n（以上为站方试读片段；完整正文可在「换源阅读」里看）"
+            o.optString("source") == "collector" ->
+                "$text\n\n（本章正文来自采集站补全，排版可能与正站略有差异）"
+            else -> text
+        }
     }
 
     companion object {

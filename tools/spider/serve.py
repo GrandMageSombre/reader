@@ -155,6 +155,9 @@ class Handler(BaseHTTPRequestHandler):
             "title": ch["title"] if ch else "",
             "vip": bool(ch["vip"]) if ch else False,
             "preview": (row["note"] or "") == "vip_preview",
+            # 正文来源：正站 / 采集站补全（App 会据此标注）
+            "source": "collector" if (row["note"] or "").startswith("collector:") else "site",
+            "note": row["note"] or "",
             "text": row["text"] or "",
         })
 
