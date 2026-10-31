@@ -50,14 +50,26 @@ class CollectorSite:
         self.name = name
         self.base = base
         self.s = Session(f"collector_{name}", base)
+        self.last_status = 0
+
+    def alive(self) -> bool:
+        """站点还活着吗（首页能不能 200）。抓之前先问一句，别在 503 上耗几分钟。"""
+        try:
+            st, _ = self.s.get(self.base + "/", allow_status=(200, 403, 404, 503),
+                               retries=0, timeout=8)
+        except Exception:  # noqa: BLE001
+            st = -1
+        self.last_status = st
+        return st in (200, 403, 404)
 
     def search(self, title: str) -> str | None:
         """按书名搜，返回同名书的详情页地址。"""
         url = self.base + SEARCH.format(key=urllib.parse.quote(title))
         try:
-            st, html = self.s.get(url, allow_status=(200, 404))
+            st, html = self.s.get(url, allow_status=(200, 404, 503), retries=1)
         except Exception:  # noqa: BLE001
             return None
+        self.last_status = st
         if st != 200:
             return None
         soup = BeautifulSoup(html, "lxml")
@@ -208,6 +220,17 @@ def fill_book(conn, book, sites: list[CollectorSite], limit: int, only_vip: bool
     stats = {"book": book["title"], "chapters": len(chapters), "pending": len(pending),
              "attempted": 0, "filled": 0, "failed": 0, "site": "", "coverage": 0.0}
 
+    live_sites = []
+    for site in sites:
+        if site.alive():
+            live_sites.append(site)
+        else:
+            log(f"[{site.name}] 不可用（HTTP {site.last_status}），跳过")
+    if not live_sites:
+        stats["error"] = "采集站全部不可用（多为 503 限流），歇一会儿再跑"
+        return stats
+    sites = live_sites
+
     for site in sites:
         detail_url = site.search(book["title"])
         if not detail_url:
@@ -249,6 +272,12 @@ def fill_book(conn, book, sites: list[CollectorSite], limit: int, only_vip: bool
             break   # 这个站够用就不必再问下一个
 
     stats["coverage"] = round(stats["filled"] / max(1, len(todo)), 3)
+    if stats["filled"] == 0 and not stats.get("reject_reason"):
+        statuses = {s.name: s.last_status for s in sites}
+        if any(v == 503 for v in statuses.values()):
+            stats["error"] = f"采集站限流（{statuses}），歇一会儿再跑"
+        elif not stats.get("attempted"):
+            stats["error"] = "采集站里没搜到这本书（未收录）"
     return stats
 
 
