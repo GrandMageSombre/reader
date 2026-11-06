@@ -3,7 +3,10 @@
 ## 这是什么
 「墨读」MoDuReader：规则驱动的 Android 小说阅读器（Kotlin + Compose）。
 书源 = 一份 JSON（分类/书单/详情/目录/正文全部 CSS 选择器描述），语法文档 `docs/书源规则.md`，模板 `docs/书源模板.json`。
-**红线**：不实现起点/番茄等站点的反爬绕过与付费墙抓取，规则由用户自行维护。
+**分层红线**：书源规则引擎只写 CSS 选择器，不碰反爬/签名/付费墙；
+破解与全量搬运在另一条路 —— PC 端 `tools/spider/crack/` + `harvest.py`、App 端「破解补全」
+（`source/Crack.kt` + `BookRepo.crackFill`），口径文档 `docs/破解全量资源.md`。
+两边判定阈值单点定义：`tools/spider/align.py` 的 `MIN_FULL_CHARS = 220` ↔ App `Crack.MIN_FULL_CHARS`。
 
 ## 工程事实
 - 代码：`app/src/main/java/com/modu/reader/`（data / net / source / repo / ui 五层）。

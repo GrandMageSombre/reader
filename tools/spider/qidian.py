@@ -218,6 +218,11 @@ class Qidian:
         status, html = self.s.get(url)
         if status != 200:
             raise RuntimeError(f"书籍页 HTTP {status}: {url}")
+        return self.parse_catalog(html)
+
+    @staticmethod
+    def parse_catalog(html: str) -> tuple[dict, list[dict]]:
+        """书籍页 HTML → (书籍信息, 章节列表)。抽成纯函数：破解层要拿 fixture 单测它。"""
         soup = BeautifulSoup(html, "lxml")
         info = {
             "title": (soup.select_one("h1") or soup).get_text(strip=True)[:60]
@@ -273,6 +278,11 @@ class Qidian:
             status, html = self.s.get(chapter["url"], referer=referer)
         if status != 200:
             return "", False, f"HTTP {status}"
+        return self.parse_chapter(html)
+
+    @staticmethod
+    def parse_chapter(html: str) -> tuple[str, bool, str]:
+        """章节页 HTML → (正文, 是否只有试读, 备注)。两个入口（PC / 移动）共用。"""
         soup = BeautifulSoup(html, "lxml")
         main = soup.select_one("main[id^=c-]")
         if not main:
@@ -280,7 +290,10 @@ class Qidian:
         paras = [p.get_text(" ", strip=True) for p in main.select("p")]
         paras = [p for p in paras if p]
         text = "\n".join(paras)
-        preview = ("订阅本章" in html) or ("本章为VIP章节" in html)
+        # 只在「短正文」时判试读：整页 HTML 里的推荐位/侧栏也可能出现「订阅本章」，
+        # 拿它判长章会误杀（实测整章 3000 字的页面同样带这个词）。
+        preview = bool(text) and len(text) < 600 and (
+            ("订阅本章" in html) or ("本章为VIP章节" in html))
         note = "vip_preview" if preview else ""
         return text, preview, note
 

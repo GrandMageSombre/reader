@@ -1,3 +1,5 @@
+# crack/ 层没有引入新的第三方依赖：亮签名走 stdlib（urllib/json/gzip/base64），
+# 并发走 concurrent.futures；libsign.so 由用户自备（见 docs/破解全量资源.md 第六节）。
 requests>=2.31
 beautifulsoup4>=4.12
 lxml>=5.0

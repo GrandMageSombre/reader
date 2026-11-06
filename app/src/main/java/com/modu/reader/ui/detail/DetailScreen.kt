@@ -89,19 +89,27 @@ fun DetailScreen(
     val deviceBusy = crawlMine?.running == true
     val deviceState = crawlMine?.message.orEmpty()
 
+    // ---- 破解补全（VIP / 付费章）：与「下载整本」两个独立任务，互不取消 ----
+    val crack by app.repo.crackState.collectAsState()
+    val crackMine = crack?.takeIf { it.bookUrl == bookUrl }
+    val crackBusy = crackMine?.running == true
+    val crackStateText = crackMine?.message.orEmpty()
+
     // 抓完后直接从本地库刷新目录，不再联网（避免把抓取成功反显成加载失败）
     // 整本下载进度（从本地库读，进入页面时刷新一次）
     var downloadDone by remember { mutableStateOf(0) }
     var downloadTotal by remember { mutableStateOf(0) }
-    LaunchedEffect(bookUrl, crawlMine?.finished, crawlMine?.message) {
+    LaunchedEffect(bookUrl, crawlMine?.finished, crawlMine?.message,
+                   crackMine?.finished, crackMine?.message) {
         app.repo.downloadProgress(bookUrl)?.let {
             downloadDone = it.first
             downloadTotal = it.second
         }
     }
 
-    LaunchedEffect(crawlMine?.finished, crawlMine?.message) {
-        if (crawlMine?.finished == true) {
+    LaunchedEffect(crawlMine?.finished, crawlMine?.message,
+                   crackMine?.finished, crackMine?.message) {
+        if (crawlMine?.finished == true || crackMine?.finished == true) {
             chapters = app.repo.cachedChapters(bookUrl)
             if (chapters.isNotEmpty()) chaptersError = null
         }
@@ -278,7 +286,7 @@ fun DetailScreen(
                                         app.repo.startCrawl(sourceId, bookUrl, b.title, limit = 30)
                                     },
                                     modifier = Modifier.weight(1f),
-                                    enabled = !deviceBusy
+                                    enabled = !crackBusy
                                 ) {
                                     Text(if (deviceBusy) "抓取中…" else "抓 30 章")
                                 }
@@ -298,7 +306,8 @@ fun DetailScreen(
                                         )
                                     }
                                 },
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !crackBusy
                             ) {
                                 Text(
                                     when {
@@ -309,11 +318,41 @@ fun DetailScreen(
                                     }
                                 )
                             }
+                            // 破解补全：VIP / 付费章在站点侧是空的，这里逐章走采集站对齐补齐
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val b = book ?: return@OutlinedButton
+                                    if (crackBusy) {
+                                        app.repo.cancelCrack()
+                                    } else {
+                                        app.repo.crackFill(sourceId, bookUrl, b.title)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !deviceBusy
+                            ) {
+                                Text(
+                                    when {
+                                        crackBusy -> "暂停破解"
+                                        crackMine?.finished == true -> "再补一轮（断点续补）"
+                                        else -> "破解补全（VIP / 付费章）"
+                                    }
+                                )
+                            }
                         }
                         if (deviceState.isNotBlank()) {
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 deviceState,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        if (crackStateText.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                crackStateText,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )

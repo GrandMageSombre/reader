@@ -129,7 +129,11 @@ class Fanqie:
     def directory(self, book_id: str) -> list[dict]:
         data = self.s.get_json(
             f"{config.FANQIE_BASE}/api/reader/directory/detail?bookId={book_id}")
-        payload = data.get("data") or {}
+        return self.parse_directory(data.get("data") or {})
+
+    @staticmethod
+    def parse_directory(payload: dict) -> list[dict]:
+        """目录接口的 `data` → 章节列表。抽成纯函数，破解层用 fixture 单测。"""
         chapters: list[dict] = []
         for vol in payload.get("chapterListWithVolume") or []:
             if isinstance(vol, dict):

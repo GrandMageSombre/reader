@@ -8,6 +8,7 @@ import com.modu.reader.data.Chapter
 import com.modu.reader.data.ShelfBook
 import com.modu.reader.data.SwapCandidate
 import com.modu.reader.source.BookSource
+import com.modu.reader.source.Crack
 import com.modu.reader.source.DeviceCrawl
 import com.modu.reader.source.DiscoverySource
 import com.modu.reader.source.Paywall
@@ -16,6 +17,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -50,11 +52,20 @@ class BookRepo(private val app: App) {
 
     private val _crawlState = MutableStateFlow<CrawlState?>(null)
 
+    /** 破解补全的状态（与「下载整本」分开：两个任务互不取消、文案不互相污染） */
+    private val _crackState = MutableStateFlow<CrawlState?>(null)
+
     /** 当前的抓取任务（「暂停下载」用） */
     private var crawlJob: kotlinx.coroutines.Job? = null
 
+    /** 当前的破解任务（「暂停破解」用） */
+    private var crackJob: kotlinx.coroutines.Job? = null
+
     /** 本机抓取的进度/结果，界面用 collectAsState 订阅 */
     val crawlState: StateFlow<CrawlState?> = _crawlState
+
+    /** 破解补全的进度/结果 */
+    val crackState: StateFlow<CrawlState?> = _crackState
 
     private fun src(id: String): BookSource =
         app.sources.source(id) ?: throw IllegalStateException("书源不存在或已被删除")
@@ -101,13 +112,19 @@ class BookRepo(private val app: App) {
      * 正文：本地缓存优先（翻回去看不用再联网），没有才抓。
      * force = true 时无视缓存重新抓（阅读器里「重试」用）。
      * 若这本书换过源，正文从换源的目标书源抓。
+     *
+     * @param aggressive 破解补全模式：判据从「空/带试读标记」放宽到「没达到全文」
+     *   （[Crack.Kind.needMore]）。番茄付费章实测只有 75 字且**不带任何标记**，
+     *   用宽松判据就会漏掉；但日常阅读仍用严格判据——感言、短章不该去全网搜
+     *   （可能被错章覆盖）。
      */
     suspend fun content(
         sourceId: String,
         bookUrl: String,
         bookTitle: String,
         chapter: Chapter,
-        force: Boolean = false
+        force: Boolean = false,
+        aggressive: Boolean = false
     ): String = withContext(Dispatchers.IO) {
         val key = contentKey(bookUrl, chapter.index)
         if (!force) {
@@ -125,12 +142,13 @@ class BookRepo(private val app: App) {
         }
         // 起点 VIP / 番茄付费章：站点只给试读、空正文，甚至直接报错
         // → 自动去采集站按「书名 + 章名」捞正文
-        if (sourceId in PAID_WALL_SOURCES &&
-            (failure != null || Paywall.needsFallback(text))
-        ) {
+        val kind = Crack.of(text, failure?.message.orEmpty())
+        val needFallback = failure != null || Paywall.needsFallback(text) ||
+            (aggressive && kind.needMore)
+        if (sourceId in PAID_WALL_SOURCES && needFallback) {
             val alt = chapterFromCollectors(bookUrl, bookTitle, chapter, sourceId)
             if (!alt.isNullOrBlank()) {
-                text = alt
+                text = withSourceNote(alt)
                 failure = null
             }
         }
@@ -140,6 +158,12 @@ class BookRepo(private val app: App) {
         // 试读片段不进缓存：否则下次直接命中缓存，再也不会去兜底
         if (!Paywall.looksPaid(text)) app.db.saveContent(key, text)
         text
+    }
+
+    /** 补全正文加一行来源说明（v1.14 的「正文来源标注」在这条路径上也要成立） */
+    private fun withSourceNote(text: String): String {
+        val note = "（本章正文来自采集站补全，排版可能与正站略有差异）"
+        return if (text.contains(note)) text else text.trimEnd() + "\n\n" + note
     }
 
     /**
@@ -295,6 +319,102 @@ class BookRepo(private val app: App) {
         val st = _crawlState.value
         if (st != null) {
             _crawlState.value = st.copy(running = false, message = "已暂停（进度已保存）", finished = true)
+        }
+    }
+
+    /**
+     * 破解补全：把目录里**还没拿到全文**的章逐章攻坚，结果落本地缓存。
+     *
+     * 与「下载整本」的分工：
+     * - 下载整本走 [DeviceCrawl]，只抓得动免费章（VIP/付费章在站点侧就是空的）；
+     * - 本方法走 [content]，命中试读/空正文时自动用 `章节名 + 预期位置` 去采集站对齐补全，
+     *   也就是「起点 VIP / 番茄付费章」的破解路径。
+     *
+     * 纪律：**只把真正的全文写进缓存**（[Crack.isFull]），试读片段不落盘，
+     * 否则下次直接命中缓存、再也不会去补。
+     */
+    fun crackFill(sourceId: String, bookUrl: String, title: String) {
+        if (_crackState.value?.running == true) return
+        _crackState.value = CrawlState(bookUrl, true, "破解补全：准备中…")
+        crackJob = io.launch {
+            var total = 0
+            var full = 0
+            var failed = 0
+            var blocked = 0
+            var streak = 0
+            fun state(msg: String, running: Boolean = true, finished: Boolean = false) {
+                _crackState.value = CrawlState(bookUrl, running, msg, finished = finished)
+            }
+            try {
+                val chapters = runCatching { chapters(sourceId, bookUrl, title) }
+                    .getOrDefault(emptyList())
+                if (chapters.isEmpty()) {
+                    state("没拿到目录，先抓一次目录", running = false, finished = true)
+                    return@launch
+                }
+                val gaps = Crack.gaps(chapters) { contentCached(bookUrl, it) }
+                total = gaps.size
+                if (total == 0) {
+                    state("全书 ${chapters.size} 章都已有正文，无需补全",
+                        running = false, finished = true)
+                    return@launch
+                }
+                state("破解补全：${chapters.size} 章里待补 $total 章…")
+                for (gap in gaps) {
+                    ensureActive()
+                    val chapter = Chapter(
+                        gap.index, gap.title,
+                        chapters.firstOrNull { it.index == gap.index }?.url.orEmpty()
+                    )
+                    try {
+                        val text = content(sourceId, bookUrl, title, chapter,
+                            force = true, aggressive = true)
+                        if (Crack.isFull(text)) {
+                            full++
+                            streak = 0
+                        } else {
+                            failed++
+                        }
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (e: Exception) {
+                        val msg = e.message.orEmpty()
+                        val kind = Crack.of("", msg)
+                        if (kind == Crack.Kind.BLOCKED) {
+                            blocked++
+                            streak++
+                            if (streak >= Crack.MAX_BLOCKED_STREAK) {
+                                state(Crack.Report(total, full, failed, blocked).text() +
+                                    "（连续被风控，歇几分钟再来）",
+                                    running = false, finished = true)
+                                return@launch
+                            }
+                        } else {
+                            failed++
+                        }
+                    }
+                    state("破解补全 ${full + failed}/$total · 已补齐 $full 章")
+                }
+                state(Crack.Report(total, full, failed, blocked).text(),
+                    running = false, finished = true)
+            } catch (ce: CancellationException) {
+                state("破解已暂停（进度已保存）", running = false, finished = true)
+                throw ce
+            } catch (e: Exception) {
+                state("破解出错：${e.message ?: e.javaClass.simpleName}",
+                    running = false, finished = true)
+            }
+        }
+    }
+
+    /** 暂停破解补全（已补的章已落库，再点一次会接着补） */
+    fun cancelCrack() {
+        crackJob?.cancel()
+        crackJob = null
+        val st = _crackState.value
+        if (st != null) {
+            _crackState.value = st.copy(running = false, message = "破解已暂停（进度已保存）",
+                finished = true)
         }
     }
 

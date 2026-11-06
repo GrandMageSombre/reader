@@ -287,7 +287,8 @@ def _looks_short(conn, key: str, idx: int) -> bool:
         return True
     if (row["note"] or "").startswith("collector:"):
         return False
-    return (row["text"] or "").strip() == "" or len(row["text"]) < 220
+    # 阈值只在 align.MIN_FULL_CHARS 定义一次（App 侧 Crack.MIN_FULL_CHARS 同源）
+    return (row["text"] or "").strip() == "" or len(row["text"]) < align.MIN_FULL_CHARS
 
 
 def main() -> None:

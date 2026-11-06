@@ -15,6 +15,10 @@ from __future__ import annotations
 import re
 
 NUM = "0-9０-９一二三四五六七八九十百千零两〇廿卅"
+
+# 「这算不算一整章」的唯一阈值（字）。PC 与 App 都从这里取，别各自再写一个数：
+# 起点 VIP 试读实测 126–136 字，正常章 1000+；作者感言常只有一两百字。
+MIN_FULL_CHARS = 220
 PREFIX = re.compile(rf"^(第[{NUM}]+[章节回卷话])+")
 PAREN = re.compile(r"[（(][^）)]{0,12}[）)]")
 PUNCT = re.compile(r"[，。！？、：；·“”‘’\"'…—\-_.·]")

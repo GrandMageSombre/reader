@@ -94,13 +94,28 @@ class DeviceCrawl {
             } catch (e: Exception) {
                 "" to false
             }
-            val text = pair.first
+            var text = pair.first
+            var preview = pair.second
+            // 付费墙第二路：PC 站只给试读时，换移动站同章再试一次
+            if (text.isBlank() || preview || Paywall.needsFallback(text)) {
+                val alt = try {
+                    DeviceApi.qidianTextMobile(context, ch.url, bookUrl)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    "" to false
+                }
+                if (Crack.of(alt.first).usable) {
+                    text = alt.first
+                    preview = false
+                }
+            }
             if (text.isBlank()) {
                 failed++
                 continue
             }
-            if (pair.second || Paywall.needsFallback(text)) {
-                paid++   // VIP 章只给约 130 字试读
+            if (preview || Paywall.needsFallback(text) || !Crack.of(text).usable) {
+                paid++   // VIP 章只给约 130 字试读；判据与 PC 端 crack 层一致
                 continue
             }
             contents.add(ch.index to text)
@@ -183,6 +198,12 @@ class DeviceCrawl {
  */
 internal object DeviceParsers {
 
+    /** 起点移动页正文容器候选（版本换过几轮，按顺序试，命中即可） */
+    private val MOBILE_SELECTORS = listOf(
+        "div#chapter-content", "div.content", "div.read-content",
+        "div.chapter-content", "main"
+    )
+
     /** 起点书库列表：`div.all-book-list li` 卡片（类目/状态/简介都能取到） */
     fun parseQidianList(html: String, sourceId: String): List<Book> {
         val doc = Jsoup.parse(html)
@@ -242,6 +263,23 @@ internal object DeviceParsers {
         val text = main.select("p").joinToString("\n") { it.text().trim() }
             .lines().filter { it.isNotBlank() }.joinToString("\n")
         val preview = html.contains("订阅本章") || html.contains("本章为VIP章节")
+        return text to preview
+    }
+
+    /**
+     * 起点**移动站**章节页：容器换过几轮，按候选选择器依次试。
+     *
+     * 裸请求常常拿到 825 字节的 WAF 脚本壳（没有正文节点），此时返回空——
+     * 上层会继续换路，不会把空正文当成功。
+     */
+    fun qidianMobileTextOf(html: String): Pair<String, Boolean> {
+        val doc = Jsoup.parse(html)
+        val body = MOBILE_SELECTORS.firstNotNullOfOrNull { doc.selectFirst(it) }
+            ?: return "" to false
+        val text = body.select("p").joinToString("\n") { it.text().trim() }
+            .lines().filter { it.isNotBlank() }.joinToString("\n")
+            .ifBlank { body.text().trim() }
+        val preview = Crack.PREVIEW_MARKS.any { html.contains(it) }
         return text to preview
     }
 

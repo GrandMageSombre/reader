@@ -18,6 +18,7 @@ import java.net.URLEncoder
 object DeviceApi {
 
     const val QIDIAN = "https://www.qidian.com"
+    const val QIDIAN_M = "https://m.qidian.com"
     const val FANQIE = "https://fanqienovel.com"
 
     /**
@@ -77,6 +78,26 @@ object DeviceApi {
         val html = DeviceHttp.get(context, chapterUrl, referer = referer, expect = "read-content")
         if (html.isBlank()) return@withContext "" to false
         DeviceParsers.qidianTextOf(html)
+    }
+
+    /**
+     * 起点正文的**第二条路**：移动站 `m.qidian.com`。
+     *
+     * PC 站把 VIP 章截成约 130 字试读，移动站的容器与风控口径都不同，
+     * 同账号下常常还能多给一段（实测：直接裸请 200 但返回 WAF 脚本壳，
+     * 需要 WebView 有 cookie 态；有态时正文在 `div#chapter-content`）。
+     * 抓不到就返回空，由上层决定要不要继续换路。
+     */
+    suspend fun qidianTextMobile(
+        context: Context,
+        chapterUrl: String,
+        referer: String
+    ): Pair<String, Boolean> = withContext(Dispatchers.IO) {
+        val m = Regex("/chapter/(\\d+)/(\\d+)").find(chapterUrl) ?: return@withContext "" to false
+        val url = "$QIDIAN_M/chapter/${m.groupValues[1]}/${m.groupValues[2]}/"
+        val html = DeviceHttp.get(context, url, referer = referer, expect = "chapter-content")
+        if (html.isBlank()) return@withContext "" to false
+        DeviceParsers.qidianMobileTextOf(html)
     }
 
     // ---------------- 番茄 ----------------
