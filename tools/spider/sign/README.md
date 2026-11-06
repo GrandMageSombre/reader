@@ -47,6 +47,7 @@ tools/spider/sign/
 ├── envelope.py   # Argus 三段信封 / Gorgon 定长头 / Khronos / query 规范化（确定的部分，可测）
 ├── cipher.py     # 可插拔加密：AES-CBC（真）+ Xor/HMAC（联调桩，服务器不认）
 ├── secsdk.py     # 签名器契约：StubSigner（本地桩）/ ExternalCommandSigner（交给真机）
+├── signer.py     # 真机签名器：读 ELF 导出表 → ctypes 调 libsign.so → 输出签名头
 ├── verify.py     # 探针：拿返回的 code/message 判断「服务器认不认」
 └── selftest.py   # python -m tools.spider.sign.selftest（全绿）
 ```
@@ -55,27 +56,31 @@ tools/spider/sign/
 信封格式、参数排序、头名、错误码判定都可以单测；加密核心永远从外部注入，
 换签名器只改一行命令。
 
-### 接一个真机签名器
+### 接一个真机签名器（`signer.py` 已经写好）
 
 ```bash
-# 1) 抽 so（需要已装 App 的设备 / APK）
+# 0) 抽 so（需要已装 App 的设备 / APK）
 adb shell "run-as com.dragon.read ls lib/"      # 或直接从 APK 解压 lib/arm64-v8a/libsign.so
 adb pull /data/app/.../lib/arm64-v8a/libsign.so .
 
-# 2) 写个包装（示例：Termux 里用 ctypes 调导出函数，导出名随版本变化）
-cat > ~/signer.py <<'EOF'
-import ctypes, json, sys
-lib = ctypes.CDLL("/data/data/com.termux/files/home/libsign.so")
-req = json.load(sys.stdin)
-# 具体入口按 so 的导出表来：常见是 Java_* 或 sign/doCommand
-out = lib.sign(...)
-print(json.dumps({"X-Argus": ..., "X-Gorgon": ..., "X-Khronos": ...}))
-EOF
+# 1) 看导出表，自动挑签名入口（会标 ←）
+python -m tools.spider.sign.signer --so ./libsign.so --list
 
-# 3) 接到爬虫
-python -m tools.spider.sign.verify --url "https://api5-normal-sinfonlineb.fqnovel.com/reading/reader/full?item_id=..." \
-  --signer "python $HOME/signer.py"
+# 2) 验契约：stdin JSON → stdout 签名头
+echo '{"device_id":"d","aid":1967,"url":"https://api5-normal-sinfonlineb.fqnovel.com/reading/reader/full","params":{"item_id":"1"},"ts_ms":1793427183156}' \
+  | python -m tools.spider.sign.signer --so ./libsign.so
+
+# 3) 接到爬虫（harvest 的 --signer / 环境变量 FANQIE_SIGNER）
+python -m tools.spider.harvest --source fanqie --what all \
+  --signer "python -m tools.spider.sign.signer --so ./libsign.so"
 ```
+
+导出函数的入参形态随版本变：`NativeSigner` 依次试 `char* → char*`、
+`int(const char*, char*, int)`，都不行就加 `--func` 指定名；仍不行用 `--cmd` 包一层设备侧程序。
+**失败一律非 0 退出码 + stderr**，不会返回假头冒充成功。
+
+注意：Android 的 `libsign.so` 是 **arm64**，在 x86 桌面 `ctypes.CDLL` 会报 `WinError 193`；
+桌面只适合 `--list` 和契约自检，真签名在设备/模拟器上跑。
 
 `verify.py` 的输出会告诉你：无签名 / 桩签名 / 真机签名 三种情况下 `code` 分别是什么——
 **只有 `code == 0` 才算过**，别拿「HTTP 200」当成功（字节系的失败也是 200）。
